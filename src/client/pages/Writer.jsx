@@ -919,7 +919,7 @@ function Workspace({ initial, onClose, me }) {
       <div className="wr-split">
         <div className="wr-left card">
           <div className="segmented wr-tools">
-            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"], ...(isBook ? [["ebook", "Ebook (Kindle, Google Play)"]] : []), ["share", "Share on social"]].map(([key, label]) => (
+            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"], ...(isBook ? [["ebook", "Publish (Kindle, Play, D2D)"]] : []), ["share", "Share on social"]].map(([key, label]) => (
               <button key={key} type="button" className={tool === key ? "on" : ""} onClick={() => setTool(key)}>{label}</button>
             ))}
           </div>

@@ -75,3 +75,6 @@
 .eb-steps summary { cursor: pointer; font-weight: 700; }
 .eb-steps ol { margin: 0.4rem 0 0; padding-left: 1.3rem; display: grid; gap: 0.3rem; }
 @media (max-width: 560px) { .eb-cover { grid-template-columns: 1fr; } .eb-canvas { max-width: 240px; } }
+.eb-listing { display: grid; gap: 0.3rem; margin-top: 0.4rem; }
+.eb-listing textarea, .eb-listing input { width: 100%; }
+.eb-listing label { margin-top: 0.5rem; }

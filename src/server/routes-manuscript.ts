@@ -23,7 +23,7 @@ const SECTIONS_PER_CALL = 2;
 const MAX_SOURCES_CHARS = 80_000;
 
 const PAGE_SIZES: Record<string, [number, number]> = {
-  a4: [210, 297], a5: [148, 210], b5: [176, 250], letter: [216, 279], "6x9": [152, 229], "5.5x8.5": [140, 216], "5x8": [127, 203], royal: [156, 234], crown: [189, 246],
+  a4: [210, 297], a5: [148, 210], b5: [176, 250], letter: [215.9, 279.4], "6x9": [152.4, 228.6], "5.5x8.5": [139.7, 215.9], "5x8": [127, 203.2], royal: [156, 234], crown: [189, 246],
 };
 const FONTS = ["Times New Roman", "Georgia", "Garamond", "Palatino Linotype", "Cambria", "Book Antiqua", "Source Serif 4", "Arial"];
 

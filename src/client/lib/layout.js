@@ -6,8 +6,9 @@ import { ANY_PLACEHOLDER, looksLikePlaceholder } from "../../shared/placeholders
 
 export const PAGE_SIZES = {
   a4: ["A4 (210 × 297 mm)", 210, 297], a5: ["A5 (148 × 210 mm)", 148, 210], b5: ["B5 (176 × 250 mm)", 176, 250],
-  letter: ["US Letter (8.5 × 11 in)", 216, 279], "6x9": ["Trade 6 × 9 in", 152, 229], "5.5x8.5": ["Digest 5.5 × 8.5 in", 140, 216],
-  "5x8": ["Pocket 5 × 8 in", 127, 203], royal: ["Royal (156 × 234 mm)", 156, 234], crown: ["Crown quarto (189 × 246 mm)", 189, 246],
+  // Inch sizes are exact (KDP checks a PDF's page size against the paperback's trim size).
+  letter: ["US Letter (8.5 × 11 in)", 215.9, 279.4], "6x9": ["Trade 6 × 9 in", 152.4, 228.6], "5.5x8.5": ["Digest 5.5 × 8.5 in", 139.7, 215.9],
+  "5x8": ["Pocket 5 × 8 in", 127, 203.2], royal: ["Royal (156 × 234 mm)", 156, 234], crown: ["Crown quarto (189 × 246 mm)", 189, 246],
 };
 export const FONTS = ["Times New Roman", "Georgia", "Garamond", "Palatino Linotype", "Cambria", "Book Antiqua", "Source Serif 4", "Arial"];
 export { STYLES };

@@ -17,8 +17,8 @@ describe("page size", () => {
 
   it("uses the chosen standard size unless a real custom size is set", () => {
     expect(isCustomSize({ page_width_mm: 90, page_height_mm: 120 })).toBe(false);
-    expect(pageSize({ page_size: "6x9", page_width_mm: 90, page_height_mm: 120 })).toEqual([152, 229]);
-    expect(pageSize({ page_size: "6x9", page_width_mm: 0, page_height_mm: 0 })).toEqual([152, 229]);
+    expect(pageSize({ page_size: "6x9", page_width_mm: 90, page_height_mm: 120 })).toEqual([152.4, 228.6]);
+    expect(pageSize({ page_size: "6x9", page_width_mm: 0, page_height_mm: 0 })).toEqual([152.4, 228.6]);
     expect(pageSize({ page_size: "a4", page_width_mm: 170, page_height_mm: 240 })).toEqual([170, 240]);
   });
 });
