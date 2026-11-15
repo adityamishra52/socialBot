@@ -7,6 +7,7 @@ import { routes as manuscriptRoutes } from "./routes-manuscript";
 import { routes as socialRoutes } from "./routes-social";
 import { routes as emailRoutes } from "./routes-email";
 import { routes as adminRoutes } from "./routes-admin";
+import { routes as bannerRoutes } from "./routes-banner";
 import { fileFromToken, streamFile } from "./files";
 import { tick } from "./autopilot";
 import { sendBatch } from "./campaigns";
@@ -189,7 +190,7 @@ export function linkedinRedirect(origin: string) {
 
 // --- Dispatch ---
 
-const ALL: Route[] = [...accountRoutes, ...socialRoutes, ...manuscriptRoutes, ...emailRoutes, ...adminRoutes];
+const ALL: Route[] = [...accountRoutes, ...socialRoutes, ...manuscriptRoutes, ...emailRoutes, ...adminRoutes, ...bannerRoutes];
 const COMPILED = ALL.map(([method, path, access, handler]) => {
   const keys: string[] = [];
   const pattern = new RegExp(`^${path.replace(/:(\w+)/g, (_m, key) => {

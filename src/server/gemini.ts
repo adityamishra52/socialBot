@@ -155,6 +155,11 @@ export async function generate(body: any, { models = textModels(), timeoutMs = 5
       throw error;
     }
   }
+  // "limit: 0" on the free tier means this key may not make pictures at all until billing is on.
+  if (last && kind === "image" && /free.?tier[\s\S]*limit:\s*0\b|limit:\s*0\b[\s\S]*free.?tier/i.test(String(last.message))) {
+    throw new ApiError("AI pictures aren't included in the free Gemini tier for this key.",
+      "Turn on billing for the key in Google AI Studio to make AI pictures (a few cents each), or use a free photo or your own picture.", 429);
+  }
   if (last && busy(last)) {
     throw new ApiError("All the free Gemini lite models are busy right now.", "This is temporary on Google's side. Wait a minute and try again: nothing is lost.", 503);
   }

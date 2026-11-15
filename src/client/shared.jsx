@@ -45,7 +45,7 @@ export function formatUsd(value) {
 
 const FEATURES = {
   compose: "Compose", analyze: "Analyze", email: "Email Studio", reel: "Reel storyboard", "reel-voice": "Reel voiceover",
-  autopost: "Autopost bot", "site-post": "Site to Post", manuscript: "Manuscript Writer",
+  autopost: "Autopost bot", "site-post": "Site to Post", manuscript: "Manuscript Writer", banner: "Banner Studio",
 };
 export const featureLabel = (key) => FEATURES[key] ?? key;
 

@@ -22,9 +22,11 @@ Read this first when you continue. Project rules and layout are in [CLAUDE.md](C
    - Book layout: page size (A4, A5, B5, Letter, 6×9, 5.5×8.5, 5×8, Royal, Crown, custom), margins incl. mirrored inside/outside and gutter, page-number position and start, roman front matter, chapters on odd pages, running headers, title/copyright/contents pages, font, size, spacing.
    - Word export and Print/PDF from the same layout; AI revise + undo; three-reviewer quality review; figures (from your spreadsheet, charts/diagrams from the text, free Openverse photos, uploads); BibTeX/RIS export.
    - Short chapters no longer fail the book: they're kept with a note to expand them with Revise.
-6. **JavaScript-built sites** (React/Vue, e.g. the portfolio) are read through Jina Reader (`JINA_API_KEY` in `.env`; `READER_FALLBACK=off` disables it).
-7. **Scheduled work** (bots, email batches) runs from `/api/cron/tick` with `CRON_SECRET` — daily on Vercel Hobby; for more often, use cron-job.org with `?key=CRON_SECRET`. Bots make image posts only (reels are recorded in the browser).
-8. Ideas from the Rytxpress skills (G:\Shared drives\Website\Website Testing\Rytxpress): multi-database search and de-duplication, section-writing guidance, reviewer personas, data-to-figure, citation export.
+6. **Banner & Poster Studio** (`/banner`; `src/client/pages/BannerStudio.jsx`, `src/client/lib/banner.js`, `src/server/banner.ts`, `routes-banner.ts`): festival/greeting, creative, research, marketing and event banners in 6 sizes, 7 art styles, colour moods, any language. AI writes the words and 1–3 concepts; pictures come from the lite image model (text-free), a free openly licensed photo (credit added to the caption) or an upload; words are drawn in real fonts and stay editable. Download PNG/JPG or post.
+   - **The Gemini key's free tier allows 0 requests to `gemini-3.1-flash-lite-image`** (429 `limit: 0`), so AI pictures (here and in Compose / Site to Post) need billing turned on in Google AI Studio. Until then the app says so plainly and banners fall back to free photos.
+7. **JavaScript-built sites** (React/Vue, e.g. the portfolio) are read through Jina Reader (`JINA_API_KEY` in `.env`; `READER_FALLBACK=off` disables it).
+8. **Scheduled work** (bots, email batches) runs from `/api/cron/tick` with `CRON_SECRET` — daily on Vercel Hobby; for more often, use cron-job.org with `?key=CRON_SECRET`. Bots make image posts only (reels are recorded in the browser).
+9. Ideas from the Rytxpress skills (G:\Shared drives\Website\Website Testing\Rytxpress): multi-database search and de-duplication, section-writing guidance, reviewer personas, data-to-figure, citation export.
 
 ## Checked
 
@@ -38,6 +40,7 @@ Read this first when you continue. Project rules and layout are in [CLAUDE.md](C
 - Posting to LinkedIn, Facebook and Instagram (needs the user's tokens in Settings); Instagram/Facebook fetching images and reels from `/api/public/file/…`.
 - Email: test send and a small campaign over Gmail SMTP.
 - Site to Reel with the portfolio on the live site.
+- Banner Studio on the live site while signed in (checked locally with stubbed replies: plan → picture fallback → free photos → editing → PNG export).
 - Check that `JINA_API_KEY` and `CRON_SECRET` are set on Vercel.
 
 ## Ideas for next steps

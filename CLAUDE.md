@@ -1,6 +1,6 @@
 # Social Autopost: project notes
 
-One TanStack Start app (React 19, Vite, Nitro) deployed to Vercel. Writes posts, reels, emails, manuscripts and books with Gemini **lite** models and publishes to LinkedIn, a Facebook Page and Instagram. Multi-user. MongoDB is the only storage (no S3, no Redis). The old Python/Flask + Vite version lives in `_legacy/` (git-ignored, reference only).
+One TanStack Start app (React 19, Vite, Nitro) deployed to Vercel. Writes posts, reels, banners/posters, emails, manuscripts and books with Gemini **lite** models and publishes to LinkedIn, a Facebook Page and Instagram. Multi-user. MongoDB is the only storage (no S3, no Redis). The old Python/Flask + Vite version lives in `_legacy/` (git-ignored, reference only).
 
 ## Layout
 
@@ -8,10 +8,11 @@ One TanStack Start app (React 19, Vite, Nitro) deployed to Vercel. Writes posts,
 - `src/client/`: the dashboard (JSX). `App.jsx` is the shell; pages stay mounted so long jobs keep running. `router.jsx` maps the old `{path, navigate, Link}` API onto TanStack Router. `api.js` (same-origin fetch, `uploadFile` in 3 MB pieces, `compressImage`; `api("/api/image", {form})` and `api("/api/reel/upload", {form})` are redirected to chunked uploads).
   - `pages/Writer.jsx`: Manuscript & Book Writer (wizard: type → topic & details → proof material → research → voice & layout; then the workspace: editor left, paged preview right).
   - `lib/layout.js` (blocks for preview/print/Word), `lib/Preview.jsx` (pagination, page numbers, mirrored margins, running headers, TOC, `printPages`), `lib/exportDocx.js` (Word via `docx`), `lib/readfiles.js` (PDF via pdfjs, .docx via mammoth, ZIP via fflate, in the browser), `lib/images.js` (4:5 fitting, SVG→PNG, data-URL uploads).
+  - `pages/BannerStudio.jsx` + `lib/banner.js`: Banner & Poster Studio. The AI writes the words and 1–3 picture concepts; the lite image model paints text-free artwork (or a free Openverse photo / the user's own picture); `drawBanner` sets the words on a canvas in Google Fonts (incl. Devanagari), so text is always spelled right and editable. Downloads PNG/JPG; posts through `/api/sitepost/publish`.
   - `reel/renderer.js`: Three.js reel renderer, recorded with MediaRecorder.
 - `src/shared/`: used by both sides. `render.ts` (citations and reference styles: vancouver, ama, ieee, apa, harvard, chicago, mla; `renderManuscript`, `renderBook`, BibTeX/RIS), `charts.ts` (SVG charts/diagrams, `checkChart` refuses numbers not stated in the text, `suggestCharts` from a spreadsheet, Okabe–Ito palette), `sheets.ts` (CSV/XLSX rows without a library).
 - `src/server/`:
-  - `app.ts`: route table and dispatcher (`[method, path, "user"|"admin"|"public", handler]`), sessions, account/settings routes, `/api/cron/tick`. Other routes: `routes-social.ts`, `routes-email.ts`, `routes-admin.ts`, `routes-manuscript.ts`.
+  - `app.ts`: route table and dispatcher (`[method, path, "user"|"admin"|"public", handler]`), sessions, account/settings routes, `/api/cron/tick`. Other routes: `routes-social.ts`, `routes-email.ts`, `routes-admin.ts`, `routes-manuscript.ts`, `routes-banner.ts` (`/api/banner/plan`, `/art`, `/photo`; prompts in `banner.ts`).
   - `db.ts`: cached MongoClient, indexes, `pack`/`unpack` (non-query fields zipped into BSON Binary `z` as a real ZIP with `data.json`).
   - `files.ts`: images/videos/audio in `files` + gzip `file_chunks`; signed public links (`/api/public/file/<token>`) for Meta to fetch; range/streaming responses.
   - `gemini.ts`: lite-only model chain (`GEMINI_MODEL` must contain "lite"), retries on 404 to the next model, `requestJson`, lite TTS, optional image model, pricing, `trackUsage` (AsyncLocalStorage). `usage.ts`: `aiRun` saves each run to `ai_usage`.

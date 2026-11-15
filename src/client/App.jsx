@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setSignedOutHandler, setToken } from "./api.js";
 import Admin from "./pages/Admin.jsx";
 import Analyze from "./pages/Analyze.jsx";
+import BannerStudio from "./pages/BannerStudio.jsx";
 import Autopost from "./pages/Autopost.jsx";
 import Compose from "./pages/Compose.jsx";
 import EmailStudio from "./pages/EmailStudio.jsx";
@@ -21,6 +22,7 @@ const NAV = [
   { to: "/analyze", label: "Analyze & Post", icon: "sparkles", isNew: true },
   { to: "/reel", label: "Site to Reel", icon: "film", isNew: true },
   { to: "/site-post", label: "Site to Post", icon: "globe", isNew: true },
+  { to: "/banner", label: "Banner & Poster", icon: "image", isNew: true },
   { to: "/manuscript", label: "Manuscript & Book Writer", icon: "doc", isNew: true },
   { to: "/email", label: "Email Studio", icon: "mail", isNew: true },
   { to: "/autopost", label: "Autopost bots", icon: "bot", isNew: true },
@@ -165,11 +167,12 @@ function UserApp() {
           {!me && !loadError && <p className="muted-text">Loading your workspace…</p>}
           {me && (
             <>
-              {/* Compose, Analyze, Site to Reel, Manuscript Writer and Email Studio stay mounted, so their work keeps running on other pages. */}
+              {/* Compose, Analyze, Site to Reel, Banner Studio, Manuscript Writer and Email Studio stay mounted, so their work keeps running on other pages. */}
               <div hidden={path !== "/compose"}><Compose me={me} refreshMe={refreshMe} /></div>
               <div hidden={path !== "/analyze"}><Analyze me={me} refreshMe={refreshMe} /></div>
               <div hidden={path !== "/reel"}><ReelStudio me={me} refreshMe={refreshMe} active={path === "/reel"} /></div>
               <div hidden={path !== "/site-post"}><SitePost me={me} refreshMe={refreshMe} /></div>
+              <div hidden={path !== "/banner"}><BannerStudio me={me} refreshMe={refreshMe} /></div>
               <div hidden={path !== "/manuscript"}><Writer me={me} active={path === "/manuscript"} /></div>
               <div hidden={path !== "/email"}><EmailStudio me={me} active={path === "/email"} /></div>
               {path === "/topics" && <Topics refreshMe={refreshMe} />}
