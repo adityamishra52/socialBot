@@ -46,6 +46,7 @@ npm run dev
 - **Email:** never accept raw HTML; render through `emailer.renderHtml`. Every bulk email carries an unsubscribe link and `List-Unsubscribe` headers.
 - **Don't retry publish calls automatically**, to avoid double posts.
 - **Retention:** MongoDB TTL indexes (`db.ts` `ensureIndexes`) delete posts, templates, campaigns, manuscripts, research, bot runs and files (`expires_at`) after `HISTORY_DAYS` (7). Saving a template or manuscript pushes its files' `expires_at` back (`touchFiles`). `ai_usage`, users, connections, topics, bots and unsubscribes are kept.
+- **JavaScript sites:** `web.renderedPage` (Jina Reader) is the fallback when a page's HTML has too little text; `readPage`, `readIssue`, `readJournal` and reel linked pages use it. `READER_FALLBACK=off` disables it.
 - **Local settings:** `.env` (git-ignored) is loaded by `env.ts` when not on Vercel. Never commit it.
 - Tests (`tests/`, `vitest.config.ts`) never touch the network or a database.
 

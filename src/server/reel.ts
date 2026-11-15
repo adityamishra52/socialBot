@@ -1,7 +1,7 @@
 import { ConfigError, GenerationError } from "./errors";
 import { requestJson, speak, wavSeconds } from "./gemini";
 import { cleanHashtags, cleanText } from "./text";
-import { articleInfo, fetchHtml, mainContent, pageImages, pageMeta, pageText, readPage, safeGet, safeUrl, joinUrl, siteLinks } from "./web";
+import { articleInfo, fetchHtml, mainContent, pageImages, pageMeta, pageText, readPage, renderedPage, safeGet, safeUrl, joinUrl, siteLinks } from "./web";
 
 // Site to Reel: read one page, write a 15-20 second storyboard, voice it with the lite TTS model.
 // The browser renders the 3D animation and records the video.
@@ -116,7 +116,14 @@ export async function readSite(url: string, followLinks = false) {
     try {
       const sub = await fetchHtml(link.url);
       const subMeta = pageMeta(sub.html);
-      const body = pageText(sub.url, sub.html);
+      let body = pageText(sub.url, sub.html);
+      if (body.length < 200) {
+        const rendered = await renderedPage(sub.url);
+        if (rendered && rendered.text.length > body.length) {
+          body = rendered.text;
+          if (!subMeta.title) subMeta.title = rendered.title;
+        }
+      }
       if (body.length < 40) continue;
       const subShared = subMeta.meta["og:image"] || subMeta.meta["twitter:image"];
       let imageIndex = -1;

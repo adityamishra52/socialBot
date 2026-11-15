@@ -81,16 +81,21 @@ const GUIDE = /(author|submission|manuscript)[\s_-]*(guide|guidelines|instructio
 export async function readJournal(url: string) {
   const clean = safeUrl(url);
   if (!clean) throw new ConfigError("Enter the journal's web address, starting with https://.");
-  const { url: finalUrl, html } = await fetchHtml(clean);
-  const texts = [`Journal page ${finalUrl}:\n${clip(pageText(finalUrl, html), 8000)}`];
+  // readPage falls back to the reader service for journal sites built with JavaScript.
+  const page = await readPage(clean, 300);
+  const finalUrl = page.url;
+  const html = page.html;
+  const full = pageText(finalUrl, html);
+  const texts = [`Journal page ${finalUrl}:\n${clip(full.length > page.text.length ? full : page.text, 8000)}`];
   const pages = [finalUrl];
   const warnings: string[] = [];
   const isGuide = GUIDE.test(new URL(finalUrl).pathname);
   const links = isGuide ? [] : [...new Set(pageLinks(html).filter(([href, label]) => GUIDE.test(`${label} ${href}`)).map(([href]) => joinUrl(finalUrl, href).split("#")[0]).filter(Boolean))].slice(0, 2);
   for (const link of links) {
     try {
-      const guide = await fetchHtml(link);
-      texts.push(`Guidelines page ${guide.url}:\n${clip(pageText(guide.url, guide.html), 12_000)}`);
+      const guide = await readPage(link, 300);
+      const guideText = pageText(guide.url, guide.html);
+      texts.push(`Guidelines page ${guide.url}:\n${clip(guideText.length > guide.text.length ? guideText : guide.text, 12_000)}`);
       pages.push(guide.url);
     } catch (error: any) {
       warnings.push(`The guidelines page ${link} couldn't be read: ${error.message}`);

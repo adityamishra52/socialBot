@@ -380,7 +380,7 @@ export default function ReelStudio({ me, refreshMe, active }) {
             <p className="field-note">
               AI reads only the page you paste: its own text and images, not its menus, sidebars, "related" lists or
               references, so the reel never promotes another author's work. For a journal article it uses the title,
-              authors, journal and abstract. Only public pages work; pages that show content only with JavaScript may not.
+              authors, journal and abstract. Only public pages work. Sites built with JavaScript (React, Vue…) are read as a browser shows them.
             </p>
           </div>
 

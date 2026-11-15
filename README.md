@@ -49,7 +49,7 @@ References come only from the real records you picked or added; the AI cites the
 ### Limits on Vercel
 
 - Requests are limited to 4.5 MB, so files are uploaded in 3 MB pieces and proof material is read in the browser.
-- There is no headless browser: pages built only with JavaScript can't be read; paste their text instead.
+- There is no headless browser on Vercel. Pages built with JavaScript (React, Vue…) are read through Jina Reader (r.jina.ai, free; `JINA_API_KEY` raises its limits).
 - Bots make image posts. Reels are rendered in your browser in Site to Reel.
 
 ## Run locally

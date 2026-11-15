@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Parser } from "htmlparser2";
+import { env } from "./env";
 import { ApiError, ConfigError } from "./errors";
 import { cleanText } from "./text";
 
@@ -405,18 +406,90 @@ export function blockedError(url: string) {
     "Copy the page's text and paste it instead, or upload the article as a PDF.");
 }
 
-/** Download a page and make sure it has readable content (no Chromium on Vercel). */
+// --- Pages built with JavaScript ---
+// Vercel has no headless browser, so a page whose HTML is only an empty shell (React, Vue and
+// similar apps) is read through a reader service that runs the page's JavaScript and returns its
+// text, links and images: Jina Reader (r.jina.ai, free; JINA_API_KEY raises its limits).
+// READER_FALLBACK=off switches this off.
+
+const READER = "https://r.jina.ai/";
+
+function markdownToText(markdown: string, keepLinks: boolean) {
+  return markdown
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\((https?:[^)\s]+)[^)]*\)/g, (_m, label, href) => (keepLinks && label.trim().length >= 15 ? `${label} [link: ${href}]` : label))
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "- ")
+    .replace(/^={3,}$|^-{3,}$/gm, "")
+    .split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
+}
+
+/** A page as a browser shows it, from the reader service, or null if it can't be read that way. */
+export async function renderedPage(url: string, keepLinks = false) {
+  if (env("READER_FALLBACK").toLowerCase() === "off") return null;
+  const clean = safeUrl(url);
+  if (!clean) return null;
+  await checkPublicHost(clean);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const headers: Record<string, string> = { Accept: "application/json", "X-With-Images-Summary": "true", "X-With-Links-Summary": "true", "X-Timeout": "20" };
+    if (env("JINA_API_KEY")) headers.Authorization = `Bearer ${env("JINA_API_KEY")}`;
+    const response = await fetch(`${READER}${clean}`, { headers, signal: controller.signal });
+    if (!response.ok) return null;
+    const data = (await response.json())?.data;
+    if (!data || typeof data.content !== "string") return null;
+    const images = Object.values<string>(data.images || {}).map((u) => safeUrl(u))
+      .filter((u) => u && !/\.(svg|gif|ico)(\?|$)/i.test(u) && !SKIP_IMAGE_WORDS.some((w) => u.toLowerCase().includes(w)));
+    const links = Object.entries<string>(data.links || {}).filter(([, href]) => safeUrl(href));
+    const anchors = links.map(([label, href]) => `<a href="${href.replace(/"/g, "&quot;")}">${label.replace(/[<>&]/g, " ")}</a>`).join("\n");
+    return {
+      url: safeUrl(data.url) || clean, title: String(data.title || "").trim(), description: String(data.description || "").trim(),
+      text: markdownToText(data.content, keepLinks), images: [...new Set(images)], linksHtml: `<nav>${anchors}</nav>`,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Download a page and make sure it has readable content, using the reader for JavaScript sites. */
 export async function readPage(url: string, minChars = 200) {
-  const { url: finalUrl, html } = await fetchHtml(url);
+  let fetched: { url: string; html: string } | null = null;
+  let failure: any = null;
+  try {
+    fetched = await fetchHtml(url);
+  } catch (error: any) {
+    if (!(error instanceof ApiError) || !(BLOCKED.includes(error.status as number) || (error.status as number) >= 500)) throw error;
+    failure = error;
+  }
+  let finalUrl = fetched?.url || safeUrl(url);
+  let html = fetched?.html || "";
   const meta = pageMeta(html);
   const content = mainContent(finalUrl, html);
   let text = content.text.length >= 40 ? content.text : pageText(finalUrl, html);
-  if (looksBlocked(meta.title, text)) throw blockedError(finalUrl);
+  let images = content.images;
+  const blocked = Boolean(html) && looksBlocked(meta.title, text);
+  if (failure || blocked || text.length < minChars) {
+    const rendered = await renderedPage(finalUrl);
+    if (rendered && rendered.text.length > text.length && !looksBlocked(rendered.title, rendered.text)) {
+      text = rendered.text;
+      images = [...new Set([...images, ...rendered.images])];
+      html = `${html}\n${rendered.linksHtml}`;
+      finalUrl = rendered.url || finalUrl;
+      meta.title = meta.title || rendered.title;
+      if (!meta.meta.description && rendered.description) meta.meta.description = rendered.description;
+    } else if (blocked || failure) {
+      throw failure && !blocked ? failure : blockedError(finalUrl);
+    }
+  }
   if (text.length < Math.min(minChars, 40)) {
     throw new ApiError("No readable text was found on that page.",
-      "The page may be built with JavaScript or need a sign-in. Copy its text and paste it instead.");
+      "The page may need a sign-in. Copy its text and paste it instead.");
   }
-  return { url: finalUrl, html, meta, text, images: content.images };
+  return { url: finalUrl, html, meta, text, images };
 }
 
 /** An image from a public address, as bytes. */

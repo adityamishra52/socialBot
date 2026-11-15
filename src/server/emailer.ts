@@ -1,7 +1,7 @@
 import { ConfigError, GenerationError } from "./errors";
 import { requestJson } from "./gemini";
 import { cleanText } from "./text";
-import { pageImages, pageMeta, pageText, readPage, fetchHtml, joinUrl, safeUrl, SKIP_IMAGE_WORDS } from "./web";
+import { pageImages, pageMeta, pageText, readPage, fetchHtml, joinUrl, safeUrl, renderedPage, SKIP_IMAGE_WORDS } from "./web";
 
 // Email templates are stored as structured content, never as raw HTML. The HTML is rendered here,
 // with every piece of text escaped and every link checked.
@@ -395,14 +395,24 @@ export const TOC_ISSUE_NOTE = 'This is the issue\'s own web page. Include every 
 
 export async function fetchPageText(url: string) {
   const page = await readPage(url, 200);
-  return pageText(page.url, page.html).slice(0, MAX_SOURCE) || page.text;
+  const full = pageText(page.url, page.html);
+  return (full.length > page.text.length ? full : page.text).slice(0, MAX_SOURCE);
 }
 
 export async function readIssue(url: string) {
-  const { url: finalUrl, html } = await fetchHtml(url);
-  const textWithLinks = pageText(finalUrl, html, true);
+  let { url: finalUrl, html } = await fetchHtml(url);
+  let textWithLinks = pageText(finalUrl, html, true);
+  const extraImages: { url: string; alt: string; cover: boolean }[] = [];
+  if (textWithLinks.length < 400) {
+    // A journal site built with JavaScript: read it as a browser shows it.
+    const rendered = await renderedPage(finalUrl, true);
+    if (rendered && rendered.text.length > textWithLinks.length) {
+      textWithLinks = rendered.text;
+      extraImages.push(...rendered.images.map((u) => ({ url: u, alt: "", cover: /cover|issue/i.test(u) })));
+    }
+  }
   if (textWithLinks.length < 40) throw new ConfigError("No readable text was found on that page.", "The page may need a sign-in or JavaScript. Paste the articles instead.");
-  const images = pageImages(finalUrl, html);
+  const images = [...pageImages(finalUrl, html), ...extraImages.filter((i) => !html.includes(i.url))];
   const meta = pageMeta(html);
   let cover = images.find((i) => i.cover)?.url || "";
   let shared = joinUrl(finalUrl, meta.meta["og:image"] || meta.meta["twitter:image"] || "");
