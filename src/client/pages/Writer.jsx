@@ -7,6 +7,7 @@ import { FONTS, PAGE_SIZES, STYLES, pageSize } from "../lib/layout.js";
 import Preview, { printPages } from "../lib/Preview.jsx";
 import { exportDocx, downloadBlob } from "../lib/exportDocx.js";
 import { toBibtex, toRis } from "../../shared/render.ts";
+import { fillPlaceholders, findPlaceholders, guessValues, mapStrings, textsOf } from "../../shared/placeholders.ts";
 import { chartSvg, checkChart, sourceDataCsv, suggestCharts } from "../../shared/charts.ts";
 import { readRows } from "../../shared/sheets.ts";
 
@@ -33,7 +34,8 @@ const BOOK_TYPES = {
   academic: "Academic monograph", textbook: "Textbook (objectives, summaries, questions)", reference: "Reference handbook",
   guide: "Practical guide", research_summary: "Research compendium", popular: "Popular non-fiction",
 };
-const STEPS = ["Type", "Topic & details", "Proof material", "Research", "Voice & layout"];
+const STEPS = ["Type", "Topic & details", "Proof material", "Research", "Your details", "Voice & layout"];
+const VOICE_STEP = STEPS.length - 1;
 const RESEARCH_MESSAGES = ["Researching…", "Searching published work…", "Reading abstracts…", "Removing duplicates…", "Ranking by relevance…"];
 const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
@@ -47,11 +49,12 @@ const defaultLayout = (mode) => (mode === "book"
 
 const blankOptions = (mode) => ({
   topic: "", brief: "", voice: "researcher", authors: "", style: mode === "book" ? "apa" : "vancouver", from: "", to: "", layout: defaultLayout(mode),
+  affiliation: "", email: "", acknowledgements: "", facts: [],
   ...(mode === "book"
     ? { book_name: "", subtitle: "", publisher: "", edition: "", isbn: "", year: String(new Date().getFullYear()), book_type: "academic", audience: "", chapters: 8, words_per_chapter: 2500,
       preface: true, introduction: false, conclusion: true, glossary: true, learning_objectives: false, key_points: true, chapter_summary: true, review_questions: false,
       case_studies: false, key_terms: true, references_placement: "book", dedication: "" }
-    : { type: "original", length: "standard", journal_url: "", figures: "auto", figure_count: 2 }),
+    : { type: "original", length: "standard", journal_url: "", figures: "auto", figure_count: 2, funding: "", ethics: "", conflicts: "", data_availability: "", contributions: "" }),
 });
 
 function Toggle({ label, checked, onChange, note }) {
@@ -364,10 +367,10 @@ function SectionsEditor({ sections, onChange }) {
           </div>
           <Area value={section.paragraphs.join("\n\n")} rows={4} onChange={(text) => update(index, { paragraphs: text.split(/\n\s*\n/).map((p) => p.replace(/\s*\n\s*/g, " ").trim()).filter(Boolean) })}
             aria-label={`Text of ${section.heading}`} />
-          <button type="button" className="link-button" onClick={() => onChange([...sections.slice(0, index + 1), { heading: "New section", level: section.level || 1, paragraphs: ["[[Write this section]]"] }, ...sections.slice(index + 1)])}>+ Add a section below</button>
+          <button type="button" className="link-button" onClick={() => onChange([...sections.slice(0, index + 1), { heading: "New section", level: section.level || 1, paragraphs: [] }, ...sections.slice(index + 1)])}>+ Add a section below</button>
         </div>
       ))}
-      {!sections.length && <button type="button" onClick={() => onChange([{ heading: "New section", level: 1, paragraphs: ["[[Write this section]]"] }])}>Add a section</button>}
+      {!sections.length && <button type="button" onClick={() => onChange([{ heading: "New section", level: 1, paragraphs: [] }])}>Add a section</button>}
     </div>
   );
 }
@@ -375,11 +378,17 @@ function SectionsEditor({ sections, onChange }) {
 const lines = (list) => (list || []).join("\n");
 const fromLines = (text) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
-function ManuscriptEditor({ draft, setDraft }) {
+function ManuscriptEditor({ draft, setDraft, options, setOptions }) {
   return (
     <div className="wr-editor-body">
       <label>Title</label>
       <Area value={draft.title || ""} rows={1} onChange={(title) => setDraft({ ...draft, title })} />
+      <label>Author(s)</label>
+      <input value={options.authors || ""} onChange={(e) => setOptions({ authors: e.target.value })} placeholder="e.g. A. Kumar, B. Singh" />
+      <div className="two-col">
+        <div><label>Affiliations</label><input value={options.affiliation || ""} onChange={(e) => setOptions({ affiliation: e.target.value })} /></div>
+        <div><label>Corresponding author's email</label><input type="email" value={options.email || ""} onChange={(e) => setOptions({ email: e.target.value })} /></div>
+      </div>
       <div className="two-col">
         <div><label>Running title</label><input value={draft.running_title || ""} onChange={(e) => setDraft({ ...draft, running_title: e.target.value })} /></div>
         <div><label>Keywords (separated by ;)</label><input value={(draft.keywords || []).join("; ")} onChange={(e) => setDraft({ ...draft, keywords: e.target.value.split(";").map((k) => k.trim()).filter(Boolean) })} /></div>
@@ -413,7 +422,7 @@ function ManuscriptEditor({ draft, setDraft }) {
           <Area value={item.text} rows={2} onChange={(text) => setDraft({ ...draft, declarations: draft.declarations.map((a, j) => (j === i ? { ...a, text } : a)) })} />
         </div>
       ))}
-      <button type="button" className="link-button" onClick={() => setDraft({ ...draft, declarations: [...(draft.declarations || []), { heading: "Acknowledgements", text: "[[Acknowledgements]]" }] })}>+ Add a declaration</button>
+      <button type="button" className="link-button" onClick={() => setDraft({ ...draft, declarations: [...(draft.declarations || []), { heading: "Acknowledgements", text: "" }] })}>+ Add a declaration</button>
       {(draft.author_notes || []).length > 0 && (
         <div className="note note-warn"><strong>Before you submit</strong><ul>{draft.author_notes.map((n, i) => <li key={i}>{n}</li>)}</ul></div>
       )}
@@ -679,6 +688,104 @@ function ReferencesPanel({ project }) {
   );
 }
 
+// --- Fill in details (placeholders) ---
+
+function FillPanel({ project, draft, setDraft, options, setOptions, onProject, busy, setBusy }) {
+  const found = useMemo(() => findPlaceholders(draft), [draft]);
+  const guesses = useMemo(() => guessValues(found, options, true), [found, options]);
+  const [values, setValues] = useState({});
+  const [details, setDetails] = useState("");
+  const [find, setFind] = useState("");
+  const [replacement, setReplacement] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(null);
+  const total = found.reduce((n, p) => n + p.count, 0);
+  const valueOf = (key) => values[key] ?? guesses[key] ?? "";
+  const filled = Object.fromEntries(found.map((p) => [p.key, valueOf(p.key).trim()]).filter(([, v]) => v));
+  const OPTION_TEXTS = ["authors", "affiliation", "dedication"];
+  const matches = useMemo(() => {
+    if (find.length < 2) return 0;
+    return [...textsOf(draft), ...OPTION_TEXTS.map((k) => String(options[k] || ""))].reduce((n, text) => n + text.split(find).length - 1, 0);
+  }, [find, draft, options]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function replaceAll() {
+    const count = found.filter((p) => filled[p.key]).reduce((n, p) => n + p.count, 0);
+    setDraft(fillPlaceholders(draft, filled));
+    setValues({});
+    setNote(`${count} placeholder${count === 1 ? "" : "s"} replaced. To change a detail again, use "Change text everywhere" below.`);
+  }
+  async function fillWithAi() {
+    setBusy("fill");
+    setError(null);
+    setNote("");
+    try {
+      let data = await api(`/api/manuscript/${project.id}/fill`, { method: "POST", json: { draft, values: filled, details } });
+      onProject(data);
+      let left = data.placeholders_left;
+      for (let round = 1; left > 0 && round < 4; round += 1) {
+        data = await api(`/api/manuscript/${project.id}/fill`, { method: "POST", json: { details, again: true } });
+        onProject(data);
+        if (data.placeholders_left >= left) {
+          left = data.placeholders_left;
+          break;
+        }
+        left = data.placeholders_left;
+      }
+      setValues({});
+      setNote(left ? `${left} placeholder${left === 1 ? " is" : "s are"} left: type them in above, or try again.` : "Done: no placeholders are left. \"Undo last revision\" below goes back.");
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy("");
+    }
+  }
+  function changeEverywhere() {
+    const swap = (text) => text.split(find).join(replacement);
+    setDraft(mapStrings(draft, swap));
+    const patch = Object.fromEntries(OPTION_TEXTS.filter((k) => String(options[k] || "").includes(find)).map((k) => [k, swap(String(options[k]))]));
+    if (Object.keys(patch).length) setOptions(patch);
+    setNote(`"${find}" changed to "${replacement}" in ${matches} place${matches === 1 ? "" : "s"}.`);
+    setFind("");
+    setReplacement("");
+  }
+
+  return (
+    <div className="wr-fill">
+      <h3 className="wr-h">Fill in details</h3>
+      {found.length > 0 ? (
+        <>
+          <p className="field-note">{total} placeholder{total === 1 ? "" : "s"} in the text. Type your details to replace {total === 1 ? "it" : "them"} everywhere, or let the AI fill them from your details and write the rest out of the text.</p>
+          <div className="wr-fill-list">
+            {found.map((p) => (
+              <label key={p.key} className="wr-fill-row">
+                <span><mark className="ph">[{p.label}]</mark>{p.count > 1 && <small className="muted-text"> {p.count}×</small>}</span>
+                <input value={valueOf(p.key)} onChange={(e) => setValues({ ...values, [p.key]: e.target.value })} placeholder="Your detail" aria-label={`Value for ${p.label}`} />
+              </label>
+            ))}
+          </div>
+          <div className="actions">
+            <button type="button" className="primary" disabled={!Object.keys(filled).length || Boolean(busy)} onClick={replaceAll}>Replace in the whole document</button>
+          </div>
+          <label htmlFor="wr-details">Your details in your own words (optional)</label>
+          <Area id="wr-details" rows={2} value={details} onChange={setDetails} placeholder="e.g. I am Dr A. Kumar of XYZ University. Thank the ABC Research Centre for access to its data." />
+          <div className="actions">
+            <button type="button" className="accent" disabled={Boolean(busy)} onClick={fillWithAi}><Icon name="wand" /> {busy === "fill" ? "Filling in… (up to a minute)" : "Fill the rest with AI"}</button>
+          </div>
+          <p className="field-note">The AI uses only the details you give. Anything it doesn't know is written out of the sentence, never invented.</p>
+        </>
+      ) : <p className="field-note">No placeholders: every detail is filled in.</p>}
+      <label htmlFor="wr-find">Change text everywhere (for example a name or an institution)</label>
+      <div className="wr-inline wr-find">
+        <input id="wr-find" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find" />
+        <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="Replace with" aria-label="Replace with" />
+        <button type="button" disabled={find.length < 2 || !matches || Boolean(busy)} onClick={changeEverywhere}>{find.length >= 2 ? `Replace ${matches}` : "Replace"}</button>
+      </div>
+      {note && <p className="note">{note}</p>}
+      <ErrorNote error={error} />
+    </div>
+  );
+}
+
 // --- Workspace ---
 
 function Workspace({ initial, onClose }) {
@@ -728,7 +835,7 @@ function Workspace({ initial, onClose }) {
       try {
         const data = await api(`/api/manuscript/${project.id}`, { method: "PUT", json: {
           draft, layout: options.layout, style: options.style,
-          ...Object.fromEntries(["authors", "publisher", "edition", "isbn", "year", "dedication", "book_name", "subtitle"].map((k) => [k, options[k] ?? ""])),
+          ...Object.fromEntries(["authors", "publisher", "edition", "isbn", "year", "dedication", "book_name", "subtitle", "affiliation", "email"].map((k) => [k, options[k] ?? ""])),
         } });
         setProject((old) => ({ ...old, word_count: data.word_count, updated_at: data.updated_at }));
         dirty.current = false;
@@ -808,10 +915,12 @@ function Workspace({ initial, onClose }) {
           </div>
           {tool === "edit" && (isBook
             ? <BookEditor project={project} draft={draft} setDraft={setDraft} options={options} setOptions={setOptions} part={part} setPart={setPart} />
-            : <ManuscriptEditor draft={draft} setDraft={setDraft} />)}
+            : <ManuscriptEditor draft={draft} setDraft={setDraft} options={options} setOptions={setOptions} />)}
           {tool === "layout" && <LayoutPanel mode={project.mode} layout={options.layout} onChange={(layout) => setOptions({ layout })} />}
           {tool === "ai" && (
             <div className="wr-panel">
+              <FillPanel project={project} draft={draft} setDraft={setDraft} options={options} setOptions={setOptions} onProject={adopt} busy={busy} setBusy={setBusy} />
+              <h3 className="wr-h">Revise with AI</h3>
               {isBook && (
                 <>
                   <label>Chapter to revise</label>
@@ -852,6 +961,82 @@ function Workspace({ initial, onClose }) {
   );
 }
 
+// --- Your details (asked before writing, so nothing is left as a placeholder) ---
+
+const DETAIL_FIELDS = {
+  book: [
+    ["authors", "Author name(s)", "e.g. Dr A. Kumar"],
+    ["affiliation", "Affiliation or institution (optional)", "e.g. Department of Economics, XYZ University"],
+    ["acknowledgements", "People or organisations to thank in the preface (optional)", "e.g. My colleagues at the ABC Research Centre", true],
+    ["dedication", "Dedication (optional)", "e.g. For my parents"],
+  ],
+  manuscript: [
+    ["authors", "Author(s)", "e.g. A. Kumar, B. Singh"],
+    ["affiliation", "Affiliations", "e.g. Department of Medicine, XYZ University, Delhi, India"],
+    ["email", "Corresponding author's email", "name@university.edu"],
+    ["funding", "Funding", "e.g. Grant 123 from the ABC Council, or: No external funding", true],
+    ["ethics", "Ethics approval and consent", "e.g. Approved by the XYZ ethics committee (ref. 2025/14); written consent from all participants", true],
+    ["conflicts", "Conflicts of interest", "e.g. None declared"],
+    ["data_availability", "Data availability", "e.g. Available from the corresponding author on request", true],
+    ["contributions", "Author contributions", "e.g. AK designed the study; BS analysed the data", true],
+    ["acknowledgements", "Acknowledgements", "e.g. We thank the staff of the ABC clinic", true],
+  ],
+};
+
+function DetailsStep({ mode, options, set, update, sources, asking, setAsking, canAsk }) {
+  const facts = options.facts || [];
+  const key = [mode, options.type || options.book_type, options.topic.trim(), options.brief.trim().length, sources.length].join("|");
+  async function ask() {
+    setAsking((old) => ({ ...old, busy: true, error: null }));
+    try {
+      const data = await api("/api/writer/questions", { method: "POST", json: { mode, options, sources } });
+      update((old) => {
+        const answers = Object.fromEntries((old.facts || []).map((f) => [f.question, f.answer]));
+        const fresh = data.questions.map((q) => ({ question: q.question, example: q.example, answer: answers[q.question] || "" }));
+        const kept = (old.facts || []).filter((f) => f.answer.trim() && !fresh.some((q) => q.question === f.question));
+        return { ...old, facts: [...fresh, ...kept].slice(0, 12) };
+      });
+      setAsking({ busy: false, key, error: null, usage: data.usage });
+    } catch (failure) {
+      setAsking((old) => ({ ...old, busy: false, key, error: failure }));
+    }
+  }
+  // Ask once on arriving here, and again when the topic, type or material changed.
+  useEffect(() => {
+    if (canAsk && asking.key !== key && !asking.busy) ask();
+  }, [key, canAsk]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setFact = (index, answer) => set({ facts: facts.map((f, i) => (i === index ? { ...f, answer } : f)) });
+  return (
+    <div>
+      <p className="lead">The AI never invents personal details or leaves placeholders such as [Author Name]. Give the details the {mode} needs here; anything left blank is left out of the text.</p>
+      <div className="two-col">
+        {DETAIL_FIELDS[mode].map(([field, label, example, long]) => (
+          <label key={field} className={long ? "span2" : ""}>{label}
+            {long
+              ? <textarea rows={2} value={options[field] || ""} onChange={(e) => set({ [field]: e.target.value })} placeholder={example} />
+              : <input type={field === "email" ? "email" : "text"} value={options[field] || ""} onChange={(e) => set({ [field]: e.target.value })} placeholder={example} />}
+          </label>
+        ))}
+      </div>
+      <h3 className="wr-h">Questions about your {mode}</h3>
+      <p className="field-note">Facts the AI can't find in your topic or material. Answer what you can; unanswered ones are left out, never guessed.</p>
+      {asking.busy && <p className="muted-text"><span className="job-orb small" aria-hidden="true" /> Working out what the AI needs to know…</p>}
+      <ErrorNote error={asking.error} />
+      <div className="wr-facts">
+        {facts.map((f, i) => (
+          <label key={`${f.question}-${i}`}>{f.question}
+            <textarea rows={2} value={f.answer} onChange={(e) => setFact(i, e.target.value)} placeholder={f.example ? `e.g. ${f.example}` : "Your answer"} />
+          </label>
+        ))}
+      </div>
+      {!asking.busy && !asking.error && asking.key === key && !facts.length && <p className="muted-text">Nothing else is needed: your topic and material cover it.</p>}
+      <div className="actions">
+        <button type="button" onClick={ask} disabled={asking.busy || !canAsk}><Icon name="sparkles" /> {facts.length ? "Ask again" : "Ask what's missing"}</button>
+      </div>
+    </div>
+  );
+}
+
 // --- The page ---
 
 export default function Writer({ me, active }) {
@@ -862,6 +1047,7 @@ export default function Writer({ me, active }) {
   const [sources, setSources] = useState([]);
   const [extraRefs, setExtraRefs] = useState([]);
   const [research, setResearch] = useState({ busy: false });
+  const [asking, setAsking] = useState({ busy: false, key: "", error: null, usage: null });
   const [project, setProject] = useState(null);
   const [projects, setProjects] = useState(null);
   const [error, setError] = useState(null);
@@ -886,6 +1072,7 @@ export default function Writer({ me, active }) {
     setSources([]);
     setExtraRefs([]);
     setResearch({ busy: false });
+    setAsking({ busy: false, key: "", error: null, usage: null });
     setStep(1);
     setView("wizard");
     setError(null);
@@ -1044,8 +1231,6 @@ export default function Writer({ me, active }) {
                 placeholder={mode === "book" ? "e.g. Antimicrobial resistance in South Asia: causes, surveillance and stewardship" : "e.g. Effect of vitamin D supplementation on glycaemic control in type 2 diabetes"} />
               <label htmlFor="wr-brief">Anything else the AI should know? (optional)</label>
               <textarea id="wr-brief" rows={3} value={options.brief} onChange={(e) => set({ brief: e.target.value })} placeholder="Your angle, key findings, the argument, what to include or avoid" />
-              <label htmlFor="wr-authors">Author(s)</label>
-              <input id="wr-authors" value={options.authors} onChange={(e) => set({ authors: e.target.value })} placeholder="e.g. A. Kumar, B. Singh" />
               {mode === "manuscript" ? (
                 <div className="two-col">
                   <label>Article type<select value={options.type} onChange={(e) => set({ type: e.target.value })}>{Object.entries(ARTICLE_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
@@ -1080,7 +1265,6 @@ export default function Writer({ me, active }) {
                     <Toggle label="Case studies" checked={options.case_studies} onChange={(v) => set({ case_studies: v })} />
                     <Toggle label="References after each chapter" checked={options.references_placement === "chapter"} onChange={(v) => set({ references_placement: v ? "chapter" : "book" })} />
                   </div>
-                  <label>Dedication (optional)<input value={options.dedication} onChange={(e) => set({ dedication: e.target.value })} /></label>
                 </>
               )}
             </div>
@@ -1088,6 +1272,9 @@ export default function Writer({ me, active }) {
           {step === 2 && <ProofMaterial sources={sources} setSources={setSources} extraRefs={extraRefs} setExtraRefs={setExtraRefs} />}
           {step === 3 && <Research mode={mode} topic={options.topic} from={options.from} to={options.to} onRange={set} state={research} setState={setResearch} />}
           {step === 4 && (
+            <DetailsStep mode={mode} options={options} set={set} update={setOptions} sources={sources} asking={asking} setAsking={setAsking} canAsk={!noGemini && Boolean(options.topic.trim())} />
+          )}
+          {step === VOICE_STEP && (
             <div>
               <label>Writing voice</label>
               <div className="wr-voices">
@@ -1111,16 +1298,18 @@ export default function Writer({ me, active }) {
                 <strong>Ready to write.</strong> {selectedCount} researched title{selectedCount === 1 ? "" : "s"} selected, {sources.length} file{sources.length === 1 ? "" : "s"} or link{sources.length === 1 ? "" : "s"} of proof material.
                 {mode === "book" ? ` About ${(options.chapters * options.words_per_chapter).toLocaleString()} words in ${options.chapters} chapters.` : ""}
                 {selectedCount === 0 && sources.length === 0 && " Add research or proof material first, so the text has real evidence."}
+                {(options.facts || []).length > 0 && ` ${(options.facts || []).filter((f) => f.answer.trim()).length} of ${options.facts.length} questions about your details answered; unanswered ones are left out of the text, never written as placeholders.`}
+                {!options.authors.trim() && " No author name given, so the text won't name one (add it in Your details)."}
               </div>
             </div>
           )}
 
           <div className="actions wr-nav">
             <button type="button" onClick={() => (step <= 1 ? setView("start") : setStep(step - 1))}>Back</button>
-            {step < 4 && <button type="button" className="primary" disabled={!canNext} onClick={() => setStep(step + 1)}>{step === 3 && !research.results ? "Skip research" : "Next"}</button>}
-            {step === 4 && <button type="button" className="accent" disabled={noGemini || (!selectedCount && !sources.length && !options.brief.trim())} onClick={write}><Icon name="sparkles" /> Write the {mode}</button>}
+            {step < VOICE_STEP && <button type="button" className="primary" disabled={!canNext} onClick={() => setStep(step + 1)}>{step === 3 && !research.results ? "Skip research" : "Next"}</button>}
+            {step === VOICE_STEP && <button type="button" className="accent" disabled={noGemini || (!selectedCount && !sources.length && !options.brief.trim())} onClick={write}><Icon name="sparkles" /> Write the {mode}</button>}
           </div>
-          <CostCard runs={[research.usage].filter(Boolean)} title="AI cost so far" />
+          <CostCard runs={[research.usage, asking.usage].filter(Boolean)} title="AI cost so far" />
         </div>
       )}
     </section>

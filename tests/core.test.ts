@@ -8,7 +8,8 @@ import { normalizeContent, renderHtml, rich, recipientsFromText, recipientsFromR
 import { cleanText, withLink, limitViolations, cleanHashtags } from "../src/server/text";
 import { nextRun, normalizeBot } from "../src/server/autopilot";
 import { csvRows, readRows } from "../src/shared/sheets";
-import { keepKnown } from "../src/server/writer";
+import { authorBlock, keepKnown } from "../src/server/writer";
+import { applyTexts, countPlaceholders, fillPlaceholders, findPlaceholders, guessValues, looksLikePlaceholder, placeholderSpots } from "../src/shared/placeholders";
 import { textModels } from "../src/server/gemini";
 import { safeUrl, mainContent, pageText } from "../src/server/web";
 import { toLittleText } from "../src/server/platforms";
@@ -146,5 +147,63 @@ describe("web reading", () => {
     expect(content.text).toContain("Body text");
     expect(content.text).not.toContain("Other article");
     expect(pageText("https://a.org", "<p>a</p><script>x</script><p>b</p>")).toBe("a\nb");
+  });
+});
+
+describe("placeholders", () => {
+  const book = {
+    title: "After the Bust",
+    preface: "This book draws on the expertise of [Author Name], with thanks to the teams at [Research Institution].",
+    chapters: [{ title: "One", sections: [{ heading: "Start", paragraphs: ["As [[author name]] argues [R3], growth slowed [sic].", "Plain text.", "[[number of firms]]"] }],
+      key_points: ["A point"] }],
+    tables: [{ columns: ["A", "B"], rows: [["[[value]]", "x"]] }],
+    author_notes: ["Check [[funding]]"],
+  };
+
+  it("recognises gaps but not citations or editorial brackets", () => {
+    expect(looksLikePlaceholder("Author Name")).toBe(true);
+    expect(looksLikePlaceholder("insert date")).toBe(true);
+    expect(looksLikePlaceholder("Company X")).toBe(true);
+    expect(looksLikePlaceholder("R3")).toBe(false);
+    expect(looksLikePlaceholder("sic")).toBe(false);
+    expect(looksLikePlaceholder("emphasis added")).toBe(false);
+    expect(looksLikePlaceholder("2021")).toBe(false);
+  });
+
+  it("lists each gap once, merging [[x]] and [X], and skips notes to the author", () => {
+    const found = findPlaceholders(book);
+    expect(found.map((p) => p.key)).toEqual(["author name", "research institution", "number of firms", "value"]);
+    expect(found[0].count).toBe(2);
+    expect(countPlaceholders(book)).toBe(5);
+  });
+
+  it("fills values everywhere and guesses only from the author's details", () => {
+    const values = guessValues(findPlaceholders(book), { authors: "A. Kumar", affiliation: "XYZ University" });
+    expect(values).toEqual({ "author name": "A. Kumar" });
+    expect(guessValues(findPlaceholders(book), { affiliation: "XYZ University" }, true)).toEqual({ "research institution": "XYZ University" });
+    const filled = fillPlaceholders(book, values);
+    expect(filled.preface).toContain("expertise of A. Kumar,");
+    expect(filled.chapters[0].sections[0].paragraphs[0]).toBe("As A. Kumar argues [R3], growth slowed [sic].");
+    expect(filled.author_notes).toEqual(["Check [[funding]]"]);
+    expect(book.preface).toContain("[Author Name]");
+  });
+
+  it("puts rewritten passages back and drops emptied paragraphs but not table cells", () => {
+    const spots = placeholderSpots(book);
+    expect(spots.map((s) => s.path.join("."))).toEqual(["preface", "chapters.0.sections.0.paragraphs.0", "chapters.0.sections.0.paragraphs.2", "tables.0.rows.0.0"]);
+    const done = applyTexts(book, [[spots[2].path, ""], [spots[3].path, ""], [spots[0].path, "This book draws on many experts."]]);
+    expect(done.chapters[0].sections[0].paragraphs).toHaveLength(2);
+    expect(done.tables[0].rows[0]).toEqual(["", "x"]);
+    expect(done.preface).toBe("This book draws on many experts.");
+    expect(book.chapters[0].sections[0].paragraphs).toHaveLength(3);
+  });
+
+  it("tells the writer the author's details and what to leave out", () => {
+    const block = authorBlock({ authors: "A. Kumar", funding: "", facts: [{ question: "How many took part?", answer: "120" }, { question: "Which hospital?", answer: "" }] });
+    expect(block).toContain("- Author(s): A. Kumar");
+    expect(block).toContain("How many took part? 120");
+    expect(block).toContain("didn't answer: Which hospital?");
+    expect(block).not.toContain("Funding");
+    expect(authorBlock({})).toContain("don't name the author");
   });
 });

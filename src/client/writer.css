@@ -142,3 +142,16 @@ mark.ph { background: #fff3a3; color: #111; padding: 0 0.1em; border-radius: 2px
 
 .wr-select-all { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 500; }
 .wr-select-all input { width: 18px; height: 18px; }
+
+/* Fill in details (placeholders) and the questions asked before writing */
+.wr-fill { display: grid; gap: 0.5rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
+.wr-fill-list { display: grid; gap: 0.4rem; }
+.wr-fill-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0.5rem; align-items: center; margin: 0; }
+.wr-fill-row mark.ph { overflow-wrap: anywhere; }
+.wr-find input { min-width: 0; }
+.wr-facts { display: grid; gap: 0.6rem; }
+.wr-facts textarea, .wr-fill textarea { width: 100%; resize: vertical; }
+@media (max-width: 560px) {
+  .wr-fill-row { grid-template-columns: 1fr; }
+  .wr-find { flex-wrap: wrap; }
+}

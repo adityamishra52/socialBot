@@ -8,11 +8,12 @@ import { publicWork, searchAll, searchDeeper, type Work } from "./research";
 import { corpusOf, drawnFigure, freeImage, lookupBook, readJournal, readRepo, readSourceUrl } from "./sources";
 import { aiRun, usageForIds, usageJson } from "./usage";
 import {
-  ARTICLE_TYPES, BOOK_TYPES, VOICES, finishBook, finishManuscript, outlineBook, planManuscript, researchQueries, deeperQueries, review, revise, suggestFigures,
-  writeChapter, writeManuscriptPart,
+  ARTICLE_TYPES, BOOK_TYPES, VOICES, detailQuestions, fillGaps, finishBook, finishManuscript, outlineBook, planManuscript, researchQueries, deeperQueries, review, revise,
+  suggestFigures, writeChapter, writeManuscriptPart,
 } from "./writer";
 import { STYLES, wordsIn } from "../shared/render";
 import { checkChart, chartSvg } from "../shared/charts";
+import { applyTexts, countPlaceholders, fillPlaceholders, findPlaceholders, guessValues, placeholderKey, placeholderSpots } from "../shared/placeholders";
 
 // Manuscript Writer and Book Writer. The browser drives the writing one step at a time
 // (POST /step), so no request runs longer than a lite-model call or two.
@@ -61,10 +62,14 @@ function projectOptions(raw: any, mode: string) {
   const r = raw && typeof raw === "object" ? raw : {};
   const topic = String(r.topic || "").split(/\s+/).join(" ").trim().slice(0, 1500);
   if (!topic) throw new ConfigError(mode === "book" ? "Enter the book's topic." : "Enter the manuscript's topic.");
+  const text = (key: string, limit: number) => String(r[key] ?? "").trim().slice(0, limit);
+  // Answers to the questions asked before writing; unanswered ones are left out of the text.
+  const facts = (Array.isArray(r.facts) ? r.facts : []).filter((f: any) => f && typeof f.question === "string" && f.question.trim()).slice(0, 12)
+    .map((f: any) => ({ question: f.question.trim().slice(0, 300), answer: String(f.answer ?? "").trim().slice(0, 1000) }));
   const common = {
     topic, brief: String(r.brief || "").trim().slice(0, 4000), voice: pick(r.voice, VOICES, "researcher"), authors: String(r.authors || "").slice(0, 2000),
     style: pick(r.style, STYLES, mode === "book" ? "apa" : "vancouver"), from: String(r.from || "").slice(0, 10), to: String(r.to || "").slice(0, 10),
-    layout: layoutOptions(r.layout, mode),
+    layout: layoutOptions(r.layout, mode), affiliation: text("affiliation", 2000), email: text("email", 200), acknowledgements: text("acknowledgements", 2000), facts,
   };
   if (mode === "book") {
     return {
@@ -82,6 +87,8 @@ function projectOptions(raw: any, mode: string) {
     ...common, type: pick(r.type, ARTICLE_TYPES, "original"), length: pick(r.length, ["short", "standard", "long"], "standard"),
     journal_url: typeof r.journal_url === "string" && /^https?:\/\//.test(r.journal_url.trim()) ? r.journal_url.trim().slice(0, 1000) : "",
     figures: pick(r.figures, ["auto", "charts", "free", "none"], "auto"), figure_count: Math.round(clampNumber(r.figure_count, 1, 4, 2)),
+    funding: text("funding", 1500), ethics: text("ethics", 1500), conflicts: text("conflicts", 1500), data_availability: text("data_availability", 1500),
+    contributions: text("contributions", 1500),
   };
 }
 
@@ -118,7 +125,7 @@ function totalSteps(project: any) {
   const parts = project.mode === "book" ? (project.plan?.chapters?.length || project.options.chapters)
     : Math.ceil((project.plan?.outline?.length || 6) / SECTIONS_PER_CALL);
   const figures = project.mode !== "book" && project.options.figures !== "none" ? 1 : 0;
-  return (project.options.journal_url ? 1 : 0) + 1 + parts + 1 + figures;
+  return (project.options.journal_url ? 1 : 0) + 1 + parts + 1 + figures + Math.max(1, project.gap_rounds || 0);
 }
 
 function stepLabel(project: any) {
@@ -132,7 +139,35 @@ function stepLabel(project: any) {
   }
   if (stage === "finish") return project.mode === "book" ? "Writing the preface, conclusion and glossary" : "Writing the abstract, tables and declarations";
   if (stage === "figures") return "Drawing the figures";
+  if (stage === "gaps") return "Checking that no detail is left as a placeholder";
   return "";
+}
+
+const GAP_BATCH = 40;
+const wordCount = (text: string) => String(text || "").split(/\s+/).filter(Boolean).length;
+
+/**
+ * One AI round on the passages that still have placeholders: they are filled from the author's
+ * details or rewritten without the missing fact. A rewrite that loses most of a long passage is
+ * not taken. Returns how many passages were sent.
+ */
+async function gapRound(project: any, details = "") {
+  const spots = placeholderSpots(project.draft);
+  const batch: typeof spots = [];
+  let chars = 0;
+  for (const spot of spots) {
+    if (batch.length >= GAP_BATCH || (batch.length && chars + spot.text.length > 40_000)) break;
+    batch.push(spot);
+    chars += spot.text.length;
+  }
+  if (!batch.length) return 0;
+  const rewritten = await fillGaps(project, batch.map((s, i) => ({ id: `p${i + 1}`, text: s.text })), details);
+  project.draft = applyTexts(project.draft, batch.map((s, i) => {
+    const text = rewritten.get(`p${i + 1}`);
+    const before = wordCount(s.text);
+    return [s.path, text !== undefined && (before < 40 || wordCount(text) >= before * 0.5) ? text : s.text];
+  }));
+  return batch.length;
 }
 
 export function projectJson(project: any, origin: string, usage: any[] = []) {
@@ -237,14 +272,37 @@ async function runStep(project: any, origin: string) {
   if (stage === "finish") {
     if (project.mode === "book") {
       Object.assign(project.draft, await finishBook(project));
-      project.stage = "done";
+      project.stage = "gaps";
     } else {
       const finished = await finishManuscript(project);
       const { figure_plans, ...rest } = finished;
       Object.assign(project.draft, rest);
       project.figure_plans = figure_plans;
-      project.stage = project.options.figures === "none" || !figure_plans.length ? "done" : "figures";
+      project.stage = project.options.figures === "none" || !figure_plans.length ? "gaps" : "figures";
     }
+    return;
+  }
+  if (stage === "gaps") {
+    // The writer is told never to leave placeholders; any it still wrote are filled from the
+    // author's details or rewritten without the missing fact (up to 3 rounds, one per step).
+    project.draft = fillPlaceholders(project.draft, guessValues(findPlaceholders(project.draft), project.options));
+    const unknown = findPlaceholders(project.draft);
+    project.gap_labels = [...new Set([...(project.gap_labels || []), ...unknown.map((p) => p.label)])].slice(0, 40);
+    if (unknown.length && (project.gap_rounds || 0) < 3) {
+      project.gap_rounds = (project.gap_rounds || 0) + 1;
+      await gapRound(project);
+      if (countPlaceholders(project.draft) && project.gap_rounds < 3) return;
+    }
+    const left = findPlaceholders(project.draft);
+    const leftKeys = new Set(left.map((p) => p.key));
+    const without = (project.gap_labels || []).filter((label: string) => !leftKeys.has(placeholderKey(label)));
+    if (without.length) {
+      project.warnings = [...(project.warnings || []), `These details weren't given, so the text was written without them: ${without.slice(0, 12).join("; ")}. To add one, open "Revise with AI" and say what to add, for example "Add that 120 people took part".`];
+    }
+    if (left.length) {
+      project.warnings = [...(project.warnings || []), `${left.reduce((n, p) => n + p.count, 0)} placeholder(s) are still marked in yellow. Open "Revise with AI" and use "Fill in details" to replace them.`];
+    }
+    project.stage = "done";
     return;
   }
   if (stage === "figures") {
@@ -269,7 +327,7 @@ async function runStep(project: any, origin: string) {
     placed.forEach(([n, plan]) => (project.figures[n - 1].after = plan.after));
     const missing = (project.figure_plans || []).length - placed.length;
     if (missing > 0) project.warnings = [...(project.warnings || []), `${missing} planned figure(s) couldn't be made (no free image, or a chart whose numbers aren't stated in the text). Add figures below.`];
-    project.stage = "done";
+    project.stage = "gaps";
   }
 }
 
@@ -333,6 +391,16 @@ export const routes: Route[] = [
     if (data.book) return lookupBook(String(data.book));
     const url = textField(data, "url") || "";
     return /github\.com\//i.test(url) ? readRepo(url) : readSourceUrl(url);
+  }],
+  // Before writing: the facts the text will need that only the author knows (asked, never invented).
+  ["POST", "/api/writer/questions", "user", async ({ body, user }) => {
+    if (!config.geminiKey()) throw new ConfigError("Writing needs the Gemini key on this server.");
+    const data = await body();
+    const mode = data.mode === "book" ? "book" : "manuscript";
+    const options = projectOptions(data.options, mode);
+    const [questions, usage] = await aiRun(user._id, "manuscript", `Details to ask: ${options.topic.slice(0, 80)}`,
+      () => detailQuestions(mode, options, cleanSources(data.sources)));
+    return { questions, usage };
   }],
   ["GET", "/api/manuscripts", "user", async ({ user }) => {
     const docs = await (await col("manuscripts")).find({ user_id: user._id }, { projection: { z: 0 } }).sort({ updated_at: -1 }).limit(60).toArray();
@@ -403,8 +471,8 @@ export const routes: Route[] = [
     }
     if (data.layout) project.options.layout = layoutOptions(data.layout, project.mode);
     if (typeof data.style === "string" && data.style in STYLES) project.options.style = data.style;
-    for (const key of ["book_name", "subtitle", "authors", "publisher", "edition", "isbn", "year", "dedication"]) {
-      if (typeof data[key] === "string") project.options[key] = data[key].slice(0, key === "authors" || key === "dedication" ? 2000 : 300);
+    for (const key of ["book_name", "subtitle", "authors", "publisher", "edition", "isbn", "year", "dedication", "affiliation", "email"]) {
+      if (typeof data[key] === "string") project.options[key] = data[key].slice(0, ["authors", "dedication", "affiliation"].includes(key) ? 2000 : 300);
     }
     if (Array.isArray(data.figures)) {
       // Captions and placement edited by the author; images and drawings stay as they were.
@@ -428,6 +496,36 @@ export const routes: Route[] = [
     if (usage) project.usage_ids = [...(project.usage_ids || []), usage.id];
     await save(project);
     return respond(project, origin);
+  }],
+  // Fill in details: the author's values replace placeholders everywhere, then one AI round fills
+  // the rest from the author's details (and `details`, in their own words) or writes them out.
+  // The browser calls again while placeholders are left and their number drops.
+  ["POST", "/api/manuscript/:id/fill", "user", async ({ params, body, user, origin }) => {
+    const project = await owned(user._id, params.id);
+    if (project.status !== "ready" || !project.draft) throw new ConfigError("Wait until the first draft is written.");
+    const data = await body();
+    if (data.draft && typeof data.draft === "object") {
+      if (JSON.stringify(data.draft).length > 3_000_000) throw new ConfigError("The text is too long to save.");
+      project.draft = data.draft;
+    }
+    const before = project.draft;
+    const values: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data.values && typeof data.values === "object" ? data.values : {}).slice(0, 200)) {
+      if (typeof value === "string" && value.trim()) values[placeholderKey(key).slice(0, 200)] = value.trim().slice(0, 1000);
+    }
+    project.draft = fillPlaceholders(project.draft, values);
+    const details = typeof data.details === "string" ? data.details.slice(0, 3000) : "";
+    if (data.ai !== false && placeholderSpots(project.draft).length) {
+      const [, usage] = await aiRun(user._id, "manuscript", `Fill in details: ${String(project.title || "").slice(0, 80)}`, () => gapRound(project, details));
+      if (usage) project.usage_ids = [...(project.usage_ids || []), usage.id];
+    }
+    // A follow-up round ("again") keeps the version from before the first round for Undo.
+    if (!data.again || !project.previous) {
+      project.previous = { draft: before };
+      project.revisions = [...(project.revisions || []).slice(-19), { note: "Filled in details", at: now() }];
+    }
+    await save(project);
+    return { ...(await respond(project, origin)), placeholders_left: countPlaceholders(project.draft) };
   }],
   ["POST", "/api/manuscript/:id/undo", "user", async ({ params, user, origin }) => {
     const project = await owned(user._id, params.id);

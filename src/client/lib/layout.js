@@ -1,4 +1,5 @@
 import { renderBook, renderManuscript, STYLES } from "../../shared/render.ts";
+import { ANY_PLACEHOLDER, looksLikePlaceholder } from "../../shared/placeholders.ts";
 
 // One list of blocks describes the whole document. The live preview, Print / PDF and the Word
 // file are all made from it, so what you see on the right is what you download.
@@ -27,15 +28,17 @@ export function roman(n) {
   return out;
 }
 
-/** Split text into runs: plain, *italic* and [[placeholder]]. */
+const RUN_PATTERN = new RegExp(`${ANY_PLACEHOLDER.source}|(?<![\\w*])\\*(\\S(?:[^*\\n]*?\\S)?)\\*(?![\\w*])`, "g");
+
+/** Split text into runs: plain, *italic* and placeholders ([[gap]] or [Author Name]), which are highlighted. */
 export function runs(text) {
   const out = [];
-  const pattern = /\[\[([^[\]\n]{1,200})\]\]|(?<![\w*])\*(\S(?:[^*\n]*?\S)?)\*(?![\w*])/g;
   let position = 0;
-  for (const match of String(text || "").matchAll(pattern)) {
+  for (const match of String(text || "").matchAll(RUN_PATTERN)) {
+    if (match[2] !== undefined && !looksLikePlaceholder(match[2])) continue;
     if (match.index > position) out.push({ text: text.slice(position, match.index) });
-    if (match[1] !== undefined) out.push({ text: `[${match[1]}]`, placeholder: true });
-    else out.push({ text: match[2], italic: true });
+    if (match[1] !== undefined || match[2] !== undefined) out.push({ text: `[${match[1] ?? match[2]}]`, placeholder: true });
+    else out.push({ text: match[3], italic: true });
     position = match.index + match[0].length;
   }
   if (position < String(text || "").length) out.push({ text: text.slice(position) });
@@ -58,6 +61,8 @@ export function buildBlocks(project) {
     const r = renderProject(project);
     out.push({ type: "doc-title", text: r.title });
     if (o.authors) out.push({ type: "authors", text: o.authors });
+    if (o.affiliation?.trim()) out.push({ type: "meta", text: o.affiliation.trim() });
+    if (o.email?.trim()) out.push({ type: "meta", text: `Corresponding author: ${o.email.trim()}` });
     if (r.running_title) out.push({ type: "meta", text: `Running title: ${r.running_title}` });
     if (r.abstract?.length) {
       out.push({ type: "h1", text: "Abstract" });
@@ -89,7 +94,7 @@ export function buildBlocks(project) {
   }
   if (layout.copyright_page !== false) {
     const year = o.year || new Date().getFullYear();
-    const lines = [`Copyright © ${year} ${o.authors || "[[author name]]"}. All rights reserved.`, o.edition ? `${o.edition} edition.` : "", o.isbn ? `ISBN: ${o.isbn}` : "", o.publisher ? `Published by ${o.publisher}.` : "",
+    const lines = [`Copyright © ${year}${o.authors?.trim() ? ` ${o.authors.trim()}` : ""}. All rights reserved.`, o.edition ? `${o.edition} edition.` : "", o.isbn ? `ISBN: ${o.isbn}` : "", o.publisher ? `Published by ${o.publisher}.` : "",
       "No part of this book may be reproduced without written permission from the copyright holder, except for brief quotations in reviews and scholarly works."].filter(Boolean);
     front({ type: "copyright", lines, breakAfter: true });
   }
