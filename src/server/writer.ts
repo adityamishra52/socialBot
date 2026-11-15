@@ -473,3 +473,16 @@ Return JSON with "figures": a list of {"type": "chart"|"diagram"|"image", "capti
     return plans;
   }, { regenerations: 1 });
 }
+
+/** 5 more specific queries for a deeper research round, unlike the ones already used. */
+export async function deeperQueries(topic: string, mode: string, previous: string[], picked: string[]) {
+  const prompt = `A researcher preparing a ${mode === "book" ? "book" : "journal manuscript"} on "${topic.slice(0, 1000)}" wants to research it more deeply.
+Searches already run: ${previous.slice(0, 12).join("; ")}
+${picked.length ? `Titles they chose as most relevant: ${picked.slice(0, 15).join("; ")}` : ""}
+Return JSON with "queries": 5 new, more specific literature-search queries (3-7 plain keywords each, no quotes or operators) that the earlier searches would miss: synonyms and related terms, specific sub-topics or mechanisms, methods and measurements, populations or settings, and systematic reviews or meta-analyses on it. Don't repeat the earlier searches.`;
+  return requestJson(prompt, (data) => {
+    const queries = list(data.queries, 6).map((q) => str(q, 160)).filter(Boolean);
+    if (!queries.length) throw new GenerationError('The JSON has no "queries"');
+    return queries;
+  }, { regenerations: 1, maxOutputTokens: 500 });
+}

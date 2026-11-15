@@ -150,8 +150,11 @@ async function openAlex(query: string, range: Range, rows: number): Promise<Work
   const filters = [range.from ? `from_publication_date:${isoDay(range.from, false)}` : "", range.to ? `to_publication_date:${isoDay(range.to, true)}` : ""].filter(Boolean);
   const mail = env("OPENALEX_EMAIL") ? `&mailto=${encodeURIComponent(env("OPENALEX_EMAIL"))}` : "";
   const data = await getJson(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=${rows}${filters.length ? `&filter=${filters.join(",")}` : ""}${mail}`);
-  return (data?.results || []).map((item: any): Work | null => {
-    if (!item.title) return null;
+  return (data?.results || []).map(openAlexItem).filter(Boolean) as Work[];
+}
+
+function openAlexItem(item: any): Work | null {
+    if (!item?.title) return null;
     const doi = String(item.doi || "").replace(/^https?:\/\/doi\.org\//, "");
     const kind = item.type === "book" || item.type === "book-chapter" ? "book" : item.type === "preprint" ? "preprint" : "article";
     return {
@@ -161,7 +164,37 @@ async function openAlex(query: string, range: Range, rows: number): Promise<Work
       pages: [item.biblio?.first_page, item.biblio?.last_page].filter(Boolean).join("-"), doi, url: doi ? `https://doi.org/${doi}` : item.id || "",
       abstract: invertedAbstract(item.abstract_inverted_index), open_access: Boolean(item.open_access?.is_oa), citations: Number(item.cited_by_count) || 0,
     };
-  }).filter(Boolean) as Work[];
+}
+
+/**
+ * Citation chasing ("snowballing"): for the works the author picked, the works they cite and the
+ * newer works that cite them, most cited first, within the date range.
+ */
+export async function snowball(dois: string[], range: Range, rows = 40): Promise<Work[][]> {
+  const mail = env("OPENALEX_EMAIL") ? `&mailto=${encodeURIComponent(env("OPENALEX_EMAIL"))}` : "";
+  const found = await Promise.all(dois.slice(0, 8).map((doi) => getJson(`https://api.openalex.org/works/doi:${encodeURIComponent(doi)}?select=id${mail}`)));
+  const ids = found.map((w) => String(w?.id || "").split("/").pop() || "").filter((id) => /^W\d+$/.test(id));
+  if (!ids.length) return [];
+  const dates = [range.from ? `from_publication_date:${isoDay(range.from, false)}` : "", range.to ? `to_publication_date:${isoDay(range.to, true)}` : ""].filter(Boolean);
+  const list = (filter: string) => getJson(`https://api.openalex.org/works?filter=${[filter, ...dates].join(",")}&sort=cited_by_count:desc&per-page=${rows}${mail}`)
+    .then((data) => (data?.results || []).map(openAlexItem).filter(Boolean) as Work[]);
+  return Promise.all([list(`cited_by:${ids.join("|")}`), list(`cites:${ids.join("|")}`)]);
+}
+
+/** A deeper round: more specific queries plus citation chasing. Returns only works not already found. */
+export async function searchDeeper(existing: Work[], queries: string[], topic: string, range: Range, seedDois: string[], options: { books?: boolean } = {}) {
+  const tasks: Promise<Work[]>[] = [];
+  queries.slice(0, 5).forEach((query) => {
+    tasks.push(europePmc(query, range, 20), crossref(query, range, 20), openAlex(query, range, 25), semanticScholar(query, range, 20),
+      pubmed(query, range, 20), doaj(query, range, 10), arxiv(query, range, 10));
+    if (options.books) tasks.push(crossref(query, range, 8, true), openLibrary(query, range, 8));
+  });
+  const settled = await Promise.allSettled([...tasks, snowball(seedDois, range).then((groups) => groups.flat())]);
+  const groups = settled.map((r) => (r.status === "fulfilled" ? r.value : []));
+  const known = new Set(existing.flatMap((w) => [w.doi ? `doi:${w.doi.toLowerCase()}` : "", `t:${normTitle(w.title)}`].filter(Boolean)));
+  const fresh = mergeWorks(groups, topic, 300, range)
+    .filter((w) => !(w.doi && known.has(`doi:${w.doi.toLowerCase()}`)) && !known.has(`t:${normTitle(w.title)}`));
+  return fresh.slice(0, 100).map((w, i) => ({ ...w, id: `W${existing.length + i + 1}` }));
 }
 
 async function arxiv(query: string, range: Range, rows: number): Promise<Work[]> {

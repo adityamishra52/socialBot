@@ -154,7 +154,22 @@ function Research({ mode, topic, from, to, onRange, state, setState }) {
       setState({ ...state, busy: false, error: failure });
     }
   }
-  const shown = (state.results || []).filter((r) => !filter.trim() || `${r.title} ${r.authors} ${r.venue}`.toLowerCase().includes(filter.trim().toLowerCase()));
+  async function deeper() {
+    setState({ ...state, deeper: true, error: null, notice: "" });
+    try {
+      const data = await api(`/api/research/${state.id}/deeper`, { method: "POST", json: { selected: state.selected } });
+      setState({
+        ...state, deeper: false, error: null, results: data.results, added: [...(state.added || []), ...data.added],
+        usage: data.usage || state.usage,
+        notice: data.added.length ? `${data.added.length} more titles found and marked New at the top of the list. Tick the ones you want.` : "No new titles were found. Try a wider date range or other words in the topic.",
+      });
+    } catch (failure) {
+      setState({ ...state, deeper: false, error: failure });
+    }
+  }
+  const isNew = (id) => (state.added || []).includes(id);
+  const shown = (state.results || []).filter((r) => !filter.trim() || `${r.title} ${r.authors} ${r.venue}`.toLowerCase().includes(filter.trim().toLowerCase()))
+    .sort((a, b) => Number(isNew(b.id)) - Number(isNew(a.id)));
   const toggle = (id) => setState({ ...state, selected: state.selected.includes(id) ? state.selected.filter((x) => x !== id) : [...state.selected, id] });
   // With a filter typed, these act on the titles shown; without one, on all of them.
   const shownIds = shown.map((r) => r.id);
@@ -175,11 +190,21 @@ function Research({ mode, topic, from, to, onRange, state, setState }) {
         </div>
       </div>
       <div className="actions">
-        <button className="accent" onClick={search} disabled={state.busy || !topic.trim()}>
+        <button className={state.results ? "" : "accent"} onClick={search} disabled={state.busy || state.deeper || !topic.trim()}>
           <Icon name="globe" /> {state.busy ? RESEARCH_MESSAGES[message] : state.results ? "Search again" : "Search online"}
         </button>
+        {state.results && (
+          <button className="accent" onClick={deeper} disabled={state.busy || state.deeper}
+            title="Searches again with more specific queries, and follows the citations of the titles you ticked">
+            <Icon name="sparkles" /> {state.deeper ? "Researching deeper…" : "Research deeper"}
+          </button>
+        )}
       </div>
-      {state.busy && <div className="wr-researching"><span className="job-orb" aria-hidden="true" /> {RESEARCH_MESSAGES[message]}</div>}
+      {(state.busy || state.deeper) && <div className="wr-researching"><span className="job-orb" aria-hidden="true" /> {state.deeper ? "Researching deeper: more specific searches and the citations of your chosen titles…" : RESEARCH_MESSAGES[message]}</div>}
+      {state.results && !state.busy && !state.deeper && !state.notice && (
+        <p className="field-note">Tick the most relevant titles, then use <strong>Research deeper</strong> to find more like them: it runs more specific searches and follows what those papers cite and what cites them.</p>
+      )}
+      {state.notice && <p className="note">{state.notice}</p>}
       <ErrorNote error={state.error} />
       {state.results && (
         <div className="wr-results">
@@ -207,6 +232,7 @@ function Research({ mode, topic, from, to, onRange, state, setState }) {
                     <strong>{r.title}</strong>
                     <span className="muted-text">{[r.authors, r.year, r.venue].filter(Boolean).join(" · ")}</span>
                     <span className="wr-tags">
+                      {isNew(r.id) && <span className="badge brand">New</span>}
                       {r.kind === "book" && <span className="badge muted">Book</span>}
                       {r.kind === "preprint" && <span className="badge warn">Preprint</span>}
                       {r.open_access && <span className="badge good">Open access</span>}

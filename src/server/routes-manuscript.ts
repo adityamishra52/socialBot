@@ -4,11 +4,11 @@ import { col, now, pack, toObjectId, unpack } from "./db";
 import { config, envNumber } from "./env";
 import { AppError, ConfigError, redact } from "./errors";
 import { ownsFile, publicFileUrl, storeBuffer, touchFiles } from "./files";
-import { publicWork, searchAll, type Work } from "./research";
+import { publicWork, searchAll, searchDeeper, type Work } from "./research";
 import { corpusOf, drawnFigure, freeImage, lookupBook, readJournal, readRepo, readSourceUrl } from "./sources";
 import { aiRun, usageForIds, usageJson } from "./usage";
 import {
-  ARTICLE_TYPES, BOOK_TYPES, VOICES, finishBook, finishManuscript, outlineBook, planManuscript, researchQueries, review, revise, suggestFigures,
+  ARTICLE_TYPES, BOOK_TYPES, VOICES, finishBook, finishManuscript, outlineBook, planManuscript, researchQueries, deeperQueries, review, revise, suggestFigures,
   writeChapter, writeManuscriptPart,
 } from "./writer";
 import { STYLES, wordsIn } from "../shared/render";
@@ -296,9 +296,37 @@ export const routes: Route[] = [
     }
     const works = await searchAll(queries, topic, range, { books: mode === "book" || data.books === true, limit: 100 });
     if (!works.length) throw new ConfigError("Nothing was found for that topic and those dates.", "Try broader words or a wider date range.");
-    const doc = { user_id: user._id, created_at: now(), topic, range, works };
+    const doc = { user_id: user._id, created_at: now(), topic, range, works, queries, mode };
     const result = await (await col("research")).insertOne(pack(doc, ["user_id", "created_at"]));
     return { research_id: String(result.insertedId), results: works.map(publicWork), usage };
+  }],
+  ["POST", "/api/research/:id/deeper", "user", async ({ params, body, user }) => {
+    const id = toObjectId(params.id);
+    const researchCol = await col("research");
+    const found = id ? await researchCol.findOne({ _id: id, user_id: user._id }) : null;
+    if (!found) throw new ConfigError("Search again first: research results are kept for a few days.");
+    const research = unpack(found);
+    const works: Work[] = research.works || [];
+    if (works.length >= 400) throw new ConfigError("This list already has 400 titles, the most it can hold.");
+    const data = await body();
+    const picked = works.filter((w) => (Array.isArray(data.selected) ? data.selected : []).includes(w.id));
+    let queries: string[] = [];
+    let usage = null;
+    if (config.geminiKey()) {
+      try {
+        [queries, usage] = await aiRun(user._id, "manuscript", `Deeper research: ${research.topic.slice(0, 80)}`,
+          () => deeperQueries(research.topic, research.mode, research.queries || [research.topic], picked.map((w) => w.title)));
+      } catch (error) {
+        console.warn("Deeper queries failed, using the chosen titles:", redact(error));
+      }
+    }
+    if (!queries.length) queries = picked.slice(0, 5).map((w) => w.title.split(/s+/).slice(0, 8).join(" "));
+    if (!queries.length) queries = [`${research.topic} systematic review`, `${research.topic} mechanisms`];
+    const added = await searchDeeper(works, queries, research.topic, research.range || { from: "", to: "" },
+      picked.map((w) => w.doi).filter(Boolean), { books: research.mode === "book" });
+    const all = [...works, ...added];
+    await researchCol.replaceOne({ _id: found._id }, pack({ ...research, works: all, queries: [...(research.queries || []), ...queries] }, ["user_id", "created_at"]));
+    return { research_id: params.id, results: all.map(publicWork), added: added.map((w) => w.id), usage };
   }],
   ["POST", "/api/sources/read", "user", async ({ body }) => {
     const data = await body();
