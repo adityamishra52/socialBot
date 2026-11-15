@@ -170,7 +170,7 @@ function Details({ item, onClose, openInEmail, openManuscript }) {
         {type === "template" && (
           <>
             <p><strong>Subject:</strong> {raw.subject || "(none)"}</p>
-            <p className="muted-text">Saved templates are kept until you delete them.</p>
+            <p className="muted-text">Templates are deleted 7 days after you last save them.</p>
             <div className="actions">
               <button className="primary" onClick={() => openInEmail({ template: raw.id })}><Icon name="pen" /> Open and edit</button>
             </div>
@@ -238,7 +238,7 @@ export default function History() {
     && (!query.trim() || i.search.toLowerCase().includes(query.trim().toLowerCase())));
 
   const emailsSent = (data?.campaigns ?? []).reduce((n, c) => n + c.sent, 0);
-  const aiCost = (data?.ai_runs ?? []).reduce((n, r) => n + (r.cost_usd ?? 0), 0);
+  const aiCost = data?.ai_cost_total ?? (data?.ai_runs ?? []).reduce((n, r) => n + (r.cost_usd ?? 0), 0);
   const keepDays = data?.keep_days ?? 7;
 
   function openManuscript(id) {
@@ -260,8 +260,8 @@ export default function History() {
           <div>
             <h1 style={{ marginBottom: "0.3rem" }}>History</h1>
             <p className="muted-text" style={{ margin: 0 }}>
-              Everything from the last {keepDays} days. Posts, reels, email campaigns and AI activity are deleted
-              automatically after {keepDays} days; saved email templates are kept until you delete them.
+              Posts, reels, campaigns, templates, manuscripts, books and all uploaded files are deleted automatically
+              {keepDays} days after they were made or last changed. The AI cost of every run is kept and shown here.
             </p>
           </div>
           <button className="small" style={{ flexShrink: 0 }} onClick={load}>Refresh</button>
@@ -273,7 +273,7 @@ export default function History() {
             <div className="stat"><strong>{emailsSent}</strong><span>Emails sent</span></div>
             <div className="stat"><strong>{counts.template ?? 0}</strong><span>Saved templates</span></div>
             <div className="stat"><strong>{counts.manuscript ?? 0}</strong><span>Manuscripts</span></div>
-            <div className="stat"><strong>{formatUsd(aiCost)}</strong><span>AI cost ({keepDays} days)</span></div>
+            <div className="stat"><strong>{formatUsd(aiCost)}</strong><span>AI cost (all time)</span></div>
           </div>
         )}
         <div className="history-toolbar">

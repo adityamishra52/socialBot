@@ -15,7 +15,6 @@ import { configForUser, getConnection, updateConnection } from "./userconfig";
 import { advanceTopic, nextTopic, parseTopics } from "./topics";
 import { blockedReason, botJson, MAX_BOTS, nextRun, normalizeBot, runJson, tick } from "./autopilot";
 import { safeUrl } from "./web";
-import { purgeHistory } from "./purge";
 import { campaignJson } from "./campaigns";
 import { freeTier } from "./gemini";
 
@@ -204,7 +203,6 @@ export const routes: Route[] = [
     return { count: parseTopics(text).length };
   }],
   ["GET", "/api/history", "user", async ({ user, origin }) => {
-    await purgeHistory(false);
     const days = config.historyDays();
     const since = new Date(Date.now() - days * 86400_000);
     const posts = await (await col("posts")).find({ user_id: user._id }).sort({ created_at: -1, _id: -1 }).limit(200).toArray();
@@ -229,10 +227,12 @@ export const routes: Route[] = [
       const doc = unpack(t);
       return { id: String(t._id), name: doc.name || "", kind: doc.content?.kind, subject: doc.content?.subject || "", updated_at: new Date(t.updated_at).toISOString() };
     });
-    const runs = await (await col("ai_usage")).find({ user_id: user._id, created_at: { $gte: since } }, { projection: { z: 0 } }).sort({ created_at: -1 }).limit(200).toArray();
+    // AI cost records are kept for good, so every run's cost can still be shown.
+    const runs = await (await col("ai_usage")).find({ user_id: user._id }, { projection: { z: 0 } }).sort({ created_at: -1 }).limit(200).toArray();
     const manuscripts = await (await col("manuscripts")).find({ user_id: user._id }, { projection: { z: 0 } }).sort({ updated_at: -1 }).limit(200).toArray();
     return {
       entries, campaigns: campaigns.map(campaignJson), templates, ai_runs: runs.map(usageJson), keep_days: days,
+      ai_cost_total: (await (await col("ai_usage")).aggregate([{ $match: { user_id: user._id } }, { $group: { _id: null, cost: { $sum: "$cost_usd" } } }]).toArray())[0]?.cost || 0,
       manuscripts: manuscripts.map((m) => ({ id: String(m._id), title: m.title || "", status: m.status, type: m.mode, type_label: m.mode === "book" ? "Book" : m.type_label || "Manuscript",
         voice: m.voice || null, word_count: m.word_count || 0, created_at: new Date(m.created_at).toISOString(), updated_at: new Date(m.updated_at).toISOString() })),
     };

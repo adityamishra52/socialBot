@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { Binary, type ObjectId } from "mongodb";
 import { sign, verify } from "./auth";
-import { col, now, toObjectId } from "./db";
+import { col, fileExpiry, now, toObjectId } from "./db";
 import { ConfigError } from "./errors";
 
 // Images and videos live in MongoDB (no S3): a "files" record plus gzip-compressed pieces of at
@@ -21,7 +21,7 @@ export async function startFile(userId: ObjectId, kind: string, mime: string, si
     throw new ConfigError(`That file is too large (${Math.round(MAX_FILE_BYTES[kind] / 1024 / 1024)} MB maximum).`);
   }
   const files = await col("files");
-  const result = await files.insertOne({ user_id: userId, kind, mime: type, size, name: String(name).slice(0, 120), status: "uploading", created_at: now() });
+  const result = await files.insertOne({ user_id: userId, kind, mime: type, size, name: String(name).slice(0, 120), status: "uploading", created_at: now(), expires_at: fileExpiry() });
   return String(result.insertedId);
 }
 
@@ -38,7 +38,7 @@ export async function putChunk(userId: ObjectId, id: string, index: number, data
   if (!Number.isInteger(index) || index < 0 || index > 40) throw new ConfigError("That part of the upload isn't valid.");
   if (data.length > CHUNK_BYTES + 1024) throw new ConfigError("That part of the upload is too large.");
   await (await col("file_chunks")).updateOne({ file_id: file._id, n: index },
-    { $set: { data: new Binary(gzipSync(data, { level: 1 })), bytes: data.length } }, { upsert: true });
+    { $set: { data: new Binary(gzipSync(data, { level: 1 })), bytes: data.length, expires_at: file.expires_at || fileExpiry() } }, { upsert: true });
 }
 
 export async function finishFile(userId: ObjectId, id: string, chunks: number) {
@@ -69,7 +69,7 @@ export async function storeBuffer(userId: ObjectId, kind: string, mime: string, 
   let index = 0;
   for (let offset = 0; offset < data.length; offset += CHUNK_BYTES, index += 1) {
     const part = data.subarray(offset, offset + CHUNK_BYTES);
-    await chunks.insertOne({ file_id: fileId, n: index, data: new Binary(gzipSync(part, { level: 1 })), bytes: part.length });
+    await chunks.insertOne({ file_id: fileId, n: index, data: new Binary(gzipSync(part, { level: 1 })), bytes: part.length, expires_at: fileExpiry() });
   }
   await (await col("files")).updateOne({ _id: fileId }, { $set: { status: "ready" } });
   return id;
@@ -100,6 +100,15 @@ export async function deleteFiles(ids: string[]) {
   if (!objectIds.length) return;
   await (await col("file_chunks")).deleteMany({ file_id: { $in: objectIds } });
   await (await col("files")).deleteMany({ _id: { $in: objectIds } });
+}
+
+/** Keep files that a saved template or manuscript still uses for another full retention period. */
+export async function touchFiles(ids: unknown[]) {
+  const objectIds = ids.map(toObjectId).filter(Boolean) as ObjectId[];
+  if (!objectIds.length) return;
+  const expires_at = fileExpiry();
+  await (await col("files")).updateMany({ _id: { $in: objectIds } }, { $set: { expires_at } });
+  await (await col("file_chunks")).updateMany({ file_id: { $in: objectIds } }, { $set: { expires_at } });
 }
 
 export async function ownsFile(userId: ObjectId, id: unknown) {

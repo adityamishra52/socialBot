@@ -10,7 +10,6 @@ import { routes as adminRoutes } from "./routes-admin";
 import { fileFromToken, streamFile } from "./files";
 import { tick } from "./autopilot";
 import { sendBatch } from "./campaigns";
-import { purgeHistory } from "./purge";
 
 // The whole API in one serverless function. Each route says who may call it.
 
@@ -180,7 +179,6 @@ async function cronTick(req: Request, origin: string) {
   const started = Date.now();
   const bots = await tick(origin, 30_000);
   const emails = Date.now() - started < 30_000 ? await sendBatch(Math.max(5_000, 45_000 - (Date.now() - started))) : 0;
-  await purgeHistory(false);
   return { ok: true, bots, emails };
 }
 

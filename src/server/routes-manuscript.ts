@@ -3,7 +3,7 @@ import { json, textField, type Route } from "./app";
 import { col, now, pack, toObjectId, unpack } from "./db";
 import { config, envNumber } from "./env";
 import { AppError, ConfigError, redact } from "./errors";
-import { ownsFile, publicFileUrl, storeBuffer } from "./files";
+import { ownsFile, publicFileUrl, storeBuffer, touchFiles } from "./files";
 import { publicWork, searchAll, type Work } from "./research";
 import { corpusOf, drawnFigure, freeImage, lookupBook, readJournal, readRepo, readSourceUrl } from "./sources";
 import { aiRun, usageForIds, usageJson } from "./usage";
@@ -101,7 +101,7 @@ function cleanSources(raw: unknown) {
 async function owned(userId: ObjectId, id: string) {
   const objectId = toObjectId(id);
   const doc = objectId ? await (await col("manuscripts")).findOne({ _id: objectId, user_id: userId }) : null;
-  if (!doc) throw new ConfigError(`That project wasn't found. Projects are kept ${envNumber("MANUSCRIPT_DAYS", 30, 1)} days after their last change.`);
+  if (!doc) throw new ConfigError(`That project wasn't found. Projects are deleted ${config.historyDays()} days after their last change.`);
   return unpack(doc);
 }
 
@@ -111,6 +111,7 @@ async function save(project: any) {
   project.figure_keys = (project.figures || []).map((f: any) => f.key).filter(Boolean);
   project.title = project.draft?.title || project.plan?.title || project.title;
   await (await col("manuscripts")).replaceOne({ _id: project._id, user_id: project.user_id }, pack(project, PLAIN));
+  await touchFiles(project.figure_keys);
 }
 
 function totalSteps(project: any) {
@@ -303,7 +304,7 @@ export const routes: Route[] = [
   ["GET", "/api/manuscripts", "user", async ({ user }) => {
     const docs = await (await col("manuscripts")).find({ user_id: user._id }, { projection: { z: 0 } }).sort({ updated_at: -1 }).limit(60).toArray();
     return { manuscripts: docs.map((d) => ({ id: String(d._id), mode: d.mode, title: d.title || "", status: d.status, type_label: d.type_label, word_count: d.word_count || 0, updated_at: new Date(d.updated_at).toISOString() })),
-      keep_days: envNumber("MANUSCRIPT_DAYS", 30, 1) };
+      keep_days: config.historyDays() };
   }],
   ["POST", "/api/manuscripts", "user", async ({ body, user, origin }) => {
     const data = await body();

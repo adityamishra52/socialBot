@@ -1,4 +1,15 @@
+import { existsSync } from "node:fs";
 import { registerSecret } from "./errors";
+
+// Local runs read .env (git-ignored). On Vercel the project's Environment Variables are used.
+// Values already set in the environment always win.
+if (!process.env.VERCEL && !process.env.VITEST && existsSync(".env")) {
+  try {
+    process.loadEnvFile(".env");
+  } catch {
+    // A damaged .env is ignored; the app reports the missing settings instead.
+  }
+}
 
 /** A setting, treating an empty value like an unset one. */
 export function env(name: string, fallback = ""): string {

@@ -1,3 +1,4 @@
+import { setServers, getServers } from "node:dns";
 import { Binary, MongoClient, ObjectId, type Collection, type Db, type Document } from "mongodb";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { env, registerEnvSecrets } from "./env";
@@ -51,6 +52,14 @@ export async function database(): Promise<Db> {
   if (!globalCache.__mongo) {
     const uri = env("MONGODB_URI");
     if (!uri) throw new ConfigError("The database isn't set up.", "Set MONGODB_URI on Vercel (for example a free MongoDB Atlas cluster).");
+    // Some home and office DNS servers refuse the SRV lookups mongodb+srv needs. Locally, try public DNS first.
+    if (!process.env.VERCEL && uri.startsWith("mongodb+srv://")) {
+      try {
+        setServers([...new Set(["8.8.8.8", "1.1.1.1", ...getServers()])]);
+      } catch {
+        // Keep the system's DNS servers.
+      }
+    }
     const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000, maxPoolSize: 5, appName: "social-autopost" });
     globalCache.__mongo = { client, db: client.db(env("MONGODB_DB", "social_autopost")) };
   }
@@ -67,16 +76,29 @@ export async function col<T extends Document = any>(name: string): Promise<Colle
   return (await database()).collection<T>(name);
 }
 
+// --- Retention: MongoDB deletes records and files by itself (TTL indexes) ---
+// Posts, reels, campaigns, email templates, manuscripts, books, research, bot runs and every
+// stored file are deleted HISTORY_DAYS (7 by default) after they were made or last changed.
+// Kept for good: users and their settings, topics, bots, unsubscribes (they must always be
+// honoured) and the AI cost records (ai_usage), so costs can always be shown.
+
+export const retentionSeconds = () => Math.round(Math.max(1, Number(process.env.HISTORY_DAYS) || 7) * 86400);
+/** When a stored file expires; pushed back while something kept still uses it. */
+export const fileExpiry = () => new Date(Date.now() + retentionSeconds() * 1000);
+
 async function ensureIndexes(db: Db) {
+  const ttl = retentionSeconds();
   const specs: [string, Record<string, 1 | -1>, Record<string, any>?][] = [
     ["users", { email: 1 }, { unique: true }],
     ["connections", { user_id: 1 }, { unique: true }],
     ["topics", { user_id: 1 }, { unique: true }],
     ["posts", { user_id: 1, created_at: -1 }],
-    ["posts", { created_at: 1 }],
+    ["posts", { created_at: 1 }, { expireAfterSeconds: ttl }],
     ["email_templates", { user_id: 1, updated_at: -1 }],
+    ["email_templates", { updated_at: 1 }, { expireAfterSeconds: ttl }],
     ["email_campaigns", { user_id: 1, created_at: -1 }],
     ["email_campaigns", { status: 1, created_at: 1 }],
+    ["email_campaigns", { updated_at: 1 }, { expireAfterSeconds: ttl }],
     ["email_unsubscribes", { user_id: 1, email: 1 }, { unique: true }],
     ["email_days", { day: 1 }, { unique: true }],
     ["ai_usage", { user_id: 1, created_at: -1 }],
@@ -84,16 +106,39 @@ async function ensureIndexes(db: Db) {
     ["bots", { user_id: 1, created_at: 1 }],
     ["bots", { active: 1, next_run_at: 1 }],
     ["bot_runs", { user_id: 1, started_at: -1 }],
+    ["bot_runs", { started_at: 1 }, { expireAfterSeconds: ttl }],
     ["bot_memory", { user_id: 1 }, { unique: true }],
     ["manuscripts", { user_id: 1, updated_at: -1 }],
+    ["manuscripts", { updated_at: 1 }, { expireAfterSeconds: ttl }],
     ["research", { user_id: 1, created_at: -1 }],
+    ["research", { created_at: 1 }, { expireAfterSeconds: ttl }],
     ["files", { user_id: 1, created_at: -1 }],
+    ["files", { expires_at: 1 }, { expireAfterSeconds: 0 }],
     ["file_chunks", { file_id: 1, n: 1 }, { unique: true }],
+    ["file_chunks", { expires_at: 1 }, { expireAfterSeconds: 0 }],
     ["login_failures", { key: 1 }],
     ["login_failures", { at: 1 }, { expireAfterSeconds: 900 }],
-    ["publish_jobs", { user_id: 1, created_at: -1 }],
   ];
-  await Promise.all(specs.map(([name, keys, options]) => db.collection(name).createIndex(keys, options || {})));
+  await Promise.all(specs.map(async ([name, keys, options = {}]) => {
+    try {
+      await db.collection(name).createIndex(keys, options);
+    } catch (error: any) {
+      // The retention period changed (HISTORY_DAYS): update the existing TTL index in place.
+      if ((error?.code === 85 || error?.code === 86) && options.expireAfterSeconds !== undefined) {
+        const existing = (await db.collection(name).indexes()).find((i) => JSON.stringify(i.key) === JSON.stringify(keys));
+        if (existing?.expireAfterSeconds !== undefined) {
+          await db.command({ collMod: name, index: { keyPattern: keys, expireAfterSeconds: options.expireAfterSeconds } });
+          return;
+        }
+        if (existing?.name) {
+          await db.collection(name).dropIndex(existing.name);
+          await db.collection(name).createIndex(keys, options);
+          return;
+        }
+      }
+      throw error;
+    }
+  }));
 }
 
 export function toObjectId(value: unknown): ObjectId | null {

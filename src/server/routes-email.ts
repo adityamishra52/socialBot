@@ -3,7 +3,7 @@ import { verify } from "./auth";
 import { col, now, pack, toObjectId, unpack } from "./db";
 import { config } from "./env";
 import { ConfigError } from "./errors";
-import { publicFileUrl, storeBuffer } from "./files";
+import { publicFileUrl, storeBuffer, touchFiles } from "./files";
 import { readRows } from "../shared/sheets";
 import {
   articlesFromJson, articlesFromRows, DEFAULT_NAME, esc, generateContent, MAX_RECIPIENTS, normalizeContent, readIssue, RecipientList,
@@ -168,6 +168,7 @@ export const routes: Route[] = [
     const content = normalizeContent(data.content);
     const doc = { user_id: user._id, name: (textField(data, "name") || content.subject).slice(0, 120), content, figure_keys: content.figures.map((f: any) => f.key).filter(Boolean), created_at: now(), updated_at: now() };
     const result = await (await col("email_templates")).insertOne(pack(doc, TEMPLATE_PLAIN));
+    await touchFiles(doc.figure_keys);
     return json({ template: { ...templateJson({ ...pack(doc, TEMPLATE_PLAIN), _id: result.insertedId }) } }, 201);
   }],
   ["GET", "/api/email/templates/:id", "user", async ({ params, user }) => {
@@ -183,6 +184,7 @@ export const routes: Route[] = [
     if (!existing) return json({ error: "That template wasn't found." }, 404);
     const doc = { ...unpack(existing), name: (textField(data, "name") || content.subject).slice(0, 120), content, figure_keys: content.figures.map((f: any) => f.key).filter(Boolean), updated_at: now() };
     await templates.replaceOne({ _id: existing._id }, pack(doc, TEMPLATE_PLAIN));
+    await touchFiles(doc.figure_keys);
     return { template: templateJson(pack(doc, TEMPLATE_PLAIN)) };
   }],
   ["DELETE", "/api/email/templates/:id", "user", async ({ params, user }) => {

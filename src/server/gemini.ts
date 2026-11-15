@@ -24,9 +24,13 @@ export function ttsModels(): string[] {
   return [...new Set([...(configured && /lite/i.test(configured) ? [configured] : []), ...LITE_TTS_MODELS])];
 }
 
-/** Images need a non-lite model, so they are off unless the administrator names one on purpose. */
+export const LITE_IMAGE_MODEL = "gemini-3.1-flash-lite-image";
+
+/** AI images use the lite image model. GEMINI_IMAGE_MODEL may name another lite one; "off" switches images off. */
 export function imageModel(): string {
-  return env("GEMINI_IMAGE_MODEL").replace(/^models\//, "");
+  const configured = env("GEMINI_IMAGE_MODEL").replace(/^models\//, "");
+  if (configured.toLowerCase() === "off") return "";
+  return configured && /lite/i.test(configured) ? configured : LITE_IMAGE_MODEL;
 }
 
 export function currentModel(): string {
@@ -257,8 +261,8 @@ export function wavSeconds(wav: Buffer): number {
 export async function makeImage(parts: any[], aspect: string): Promise<{ data: Buffer; mime: string }> {
   const model = imageModel();
   if (!model) {
-    throw new ConfigError("AI images are switched off to keep costs low (there is no Gemini lite image model).",
-      "Upload your own image, use one from the site, or ask your administrator to set GEMINI_IMAGE_MODEL.");
+    throw new ConfigError("AI images are switched off on this server.",
+      "Upload your own image, or ask your administrator to remove GEMINI_IMAGE_MODEL=off.");
   }
   const data = await generate({
     contents: [{ role: "user", parts }],

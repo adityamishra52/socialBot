@@ -38,13 +38,15 @@ npm run dev
 
 - **Serverless:** no background threads. Long work is split into steps the browser drives (`/api/manuscript/:id/step`, `/api/email/campaigns/:id/step`, `/api/publish/job/:id`) or the cron tick runs. Keep each request under ~50 s (`maxDuration` 60).
 - **Request bodies are limited to 4.5 MB on Vercel:** upload files with `uploadFile` (chunks), read proof material in the browser, never send many data-URL images in one request.
-- **Gemini lite only.** Don't add non-lite text models. AI images stay off unless `GEMINI_IMAGE_MODEL` is set; hide image buttons when `me.services.ai_images` is false.
+- **Gemini lite only** (text, TTS and the lite image model `gemini-3.1-flash-lite-image`). Never add non-lite models. `GEMINI_IMAGE_MODEL=off` switches images off; image buttons are hidden when `me.services.ai_images` is false.
 - **Never invent references:** only records from research or added sources; `keepKnown` drops unknown `[R#]`.
 - **Research UI never names the services** searched.
 - **Secrets:** use `registerSecret`/`redact`; never register `ADMIN_PIN`. Tokens are AES-GCM encrypted (`auth.ts`).
 - **Per-user publishing:** only the user's own Meta/LinkedIn credentials (`configForUser`); server `FB_*`/`IG_*` values are never used.
 - **Email:** never accept raw HTML; render through `emailer.renderHtml`. Every bulk email carries an unsubscribe link and `List-Unsubscribe` headers.
 - **Don't retry publish calls automatically**, to avoid double posts.
+- **Retention:** MongoDB TTL indexes (`db.ts` `ensureIndexes`) delete posts, templates, campaigns, manuscripts, research, bot runs and files (`expires_at`) after `HISTORY_DAYS` (7). Saving a template or manuscript pushes its files' `expires_at` back (`touchFiles`). `ai_usage`, users, connections, topics, bots and unsubscribes are kept.
+- **Local settings:** `.env` (git-ignored) is loaded by `env.ts` when not on Vercel. Never commit it.
 - Tests (`tests/`, `vitest.config.ts`) never touch the network or a database.
 
 ## Git
