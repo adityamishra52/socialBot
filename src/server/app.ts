@@ -175,7 +175,8 @@ const accountRoutes: Route[] = [
 
 async function cronTick(req: Request, origin: string) {
   const secret = env("CRON_SECRET");
-  if (!secret || !safeEqual(bearer(req) || new URL(req.url).searchParams.get("key") || "", secret)) throw new HttpError(401, "Not allowed.");
+  if (!secret) throw new HttpError(503, "CRON_SECRET isn't set on this server.", "Add CRON_SECRET in Vercel > Settings > Environment Variables, then redeploy.");
+  if (!safeEqual(bearer(req) || new URL(req.url).searchParams.get("key") || "", secret)) throw new HttpError(401, "Not allowed.");
   const started = Date.now();
   const bots = await tick(origin, 30_000);
   const emails = Date.now() - started < 30_000 ? await sendBatch(Math.max(5_000, 45_000 - (Date.now() - started))) : 0;
