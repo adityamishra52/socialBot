@@ -322,7 +322,7 @@ export default function BannerStudio({ me, refreshMe }) {
           <h3 className="bn-h">Look and size</h3>
           <label>Size</label>
           <div className="chips" role="radiogroup" aria-label="Size">
-            {Object.entries(SIZES).map(([key, size]) => (
+            {Object.entries(SIZES).filter(([, size]) => !size.hidden).map(([key, size]) => (
               <button key={key} type="button" role="radio" aria-checked={brief.aspect === key} className={`chip${brief.aspect === key ? " on" : ""}`} onClick={() => set({ aspect: key })}>{size.label}</button>
             ))}
           </div>

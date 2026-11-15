@@ -9,6 +9,8 @@ export const SIZES = {
   "16:9": { w: 1920, h: 1080, label: "Landscape, YouTube or slides (16:9)" },
   "3:4": { w: 1800, h: 2400, label: "Print poster (3:4)" },
   "21:9": { w: 2520, h: 1080, label: "Wide web banner (21:9)" },
+  // Ebook covers (Amazon KDP and Google Play Books recommend 1600 × 2560); not offered on the Banner page.
+  ebook: { w: 1600, h: 2560, label: "Ebook cover (1600 × 2560)", hidden: true },
 };
 
 export const FONT_SETS = {

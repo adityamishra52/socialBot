@@ -12,7 +12,7 @@ import { uploadDataUrls } from "./images.js";
 // learn, and quotes copied word for word from the text, with a post written for each platform.
 // The cards are drawn here in the browser (no AI image cost) and posted like Site to Post.
 
-const THEMES = {
+export const THEMES = {
   classic: { label: "Classic cream", palette: { background: "#f7f1e3", text: "#2b2118", accent: "#9a3412" }, ornament: "leaves", font: "serif" },
   midnight: { label: "Midnight", palette: { background: "#0f172a", text: "#f8fafc", accent: "#f59e0b" }, ornament: "stars", font: "serif" },
   ocean: { label: "Ocean", palette: { background: "#e0f2fe", text: "#0c4a6e", accent: "#0284c7" }, ornament: "waves", font: "sans" },

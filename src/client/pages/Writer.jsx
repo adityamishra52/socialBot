@@ -6,6 +6,7 @@ import { readProofFile } from "../lib/readfiles.js";
 import { FONTS, PAGE_SIZES, STYLES, pageSize } from "../lib/layout.js";
 import Preview, { printPages } from "../lib/Preview.jsx";
 import SharePanel from "../lib/SharePanel.jsx";
+import EbookPanel from "../lib/EbookPanel.jsx";
 import { exportDocx, downloadBlob } from "../lib/exportDocx.js";
 import { toBibtex, toRis } from "../../shared/render.ts";
 import { fillPlaceholders, findPlaceholders, guessValues, mapStrings, textsOf } from "../../shared/placeholders.ts";
@@ -918,7 +919,7 @@ function Workspace({ initial, onClose, me }) {
       <div className="wr-split">
         <div className="wr-left card">
           <div className="segmented wr-tools">
-            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"], ["share", "Share on social"]].map(([key, label]) => (
+            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"], ...(isBook ? [["ebook", "Ebook (Kindle, Google Play)"]] : []), ["share", "Share on social"]].map(([key, label]) => (
               <button key={key} type="button" className={tool === key ? "on" : ""} onClick={() => setTool(key)}>{label}</button>
             ))}
           </div>
@@ -955,6 +956,7 @@ function Workspace({ initial, onClose, me }) {
           {tool === "figures" && <FiguresPanel project={{ ...project, draft }} onProject={adopt} chapter={typeof part === "number" ? part : 0} />}
           {tool === "review" && <ReviewPanel project={project} onProject={(data) => setProject(data)} onRevise={(text) => { setTool("ai"); reviseWith(text); }} busy={Boolean(busy)} />}
           {tool === "refs" && <ReferencesPanel project={project} />}
+          {tool === "ebook" && <EbookPanel project={project} draft={draft} options={options} />}
           {tool === "share" && <SharePanel project={project} draft={draft} options={options} me={me} />}
           <CostCard runs={project.usage} title="AI cost for this project" />
         </div>
