@@ -38,7 +38,7 @@ npm run dev
 
 - **Serverless:** no background threads. Long work is split into steps the browser drives (`/api/manuscript/:id/step`, `/api/email/campaigns/:id/step`, `/api/publish/job/:id`) or the cron tick runs. Keep each request under ~50 s (`maxDuration` 60).
 - **Request bodies are limited to 4.5 MB on Vercel:** upload files with `uploadFile` (chunks), read proof material in the browser, never send many data-URL images in one request.
-- **Gemini lite only** (text, TTS and the lite image model `gemini-3.1-flash-lite-image`). Never add non-lite models. `GEMINI_IMAGE_MODEL=off` switches images off; image buttons are hidden when `me.services.ai_images` is false.
+- **Gemini lite only.** Text models: 3.1-flash-lite, then 3.1-flash-lite-preview, flash-lite-latest, 3.5-flash-lite (busy 503/429 or retired 404 moves on; `gemini.generate`). Also TTS and the lite image model `gemini-3.1-flash-lite-image`). Never add non-lite models. `GEMINI_IMAGE_MODEL=off` switches images off; image buttons are hidden when `me.services.ai_images` is false.
 - **Never invent references:** only records from research or added sources; `keepKnown` drops unknown `[R#]`.
 - **Research UI never names the services** searched.
 - **Secrets:** use `registerSecret`/`redact`; never register `ADMIN_PIN`. Tokens are AES-GCM encrypted (`auth.ts`).

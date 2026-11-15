@@ -865,9 +865,19 @@ export default function Writer({ me, active }) {
   async function follow(current) {
     announceTask("/manuscript", "running");
     let data = current;
+    let retries = 0;
     try {
       while (data.status === "writing") {
         data = await api(`/api/manuscript/${data.id}/step`, { method: "POST" });
+        // Google's models are sometimes briefly overloaded: wait and carry on from the same step.
+        if (data.status === "failed" && retries < 3 && /busy|high demand|overloaded|try again|rate limit|quota|503|429/i.test(`${data.error} ${data.hint}`)) {
+          retries += 1;
+          setProject({ ...data, status: "writing", progress: { ...data.progress, label: `The AI is busy, trying again in ${10 * retries} seconds (${retries} of 3)` } });
+          await wait(10_000 * retries);
+          data = { ...data, status: "writing" };
+          continue;
+        }
+        if (data.status === "writing") retries = 0;
         setProject(data);
         if (data.status === "writing") await wait(400);
       }

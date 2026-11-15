@@ -4,10 +4,17 @@ import { ApiError, ConfigError, GenerationError, PromptBlockedError } from "./er
 import { httpCall, jsonOf } from "./http";
 
 // Only Gemini *lite* models are used, to keep the bill low. GEMINI_MODEL may pick another lite
-// model; a name without "lite" is ignored. When a model is retired (404), the next one is tried.
+// model; a name without "lite" is ignored. When a model is retired (404) or busy (503, 429), the
+// next one is tried: the main model first, then free-tier lite fallbacks, the dearest last.
 
 export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
-export const LITE_MODELS = ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"];
+export const LITE_MODELS = [
+  "gemini-3.1-flash-lite", // main model ($0.25 in / $1.50 out per 1M tokens)
+  "gemini-3.1-flash-lite-preview", // fallback 1: same price, separate capacity
+  "gemini-flash-lite-latest", // fallback 2: Google's current lite model (now 3.5)
+  "gemini-3.5-flash-lite", // last resort ($0.30 / $2.50)
+  "gemini-2.5-flash-lite", // cheapest, but only for older keys
+];
 export const LITE_TTS_MODELS = ["gemini-3.8-flash-lite-tts"];
 
 let workingModel: string | null = null;
@@ -113,29 +120,45 @@ export function requireKey(): string {
 }
 
 const retired = (error: any) => error instanceof ApiError && (error.status === 404 || /not found|not supported/i.test(error.message));
+/** Busy or out of quota for now: another lite model (with its own capacity and free quota) may answer. */
+export const busy = (error: any) => error instanceof ApiError
+  && ([429, 500, 502, 503, 504].includes(error.status as number) || /high demand|overloaded|unavailable|resource.?exhausted|quota/i.test(error.message));
 
-/** POST generateContent to the first lite model that exists. */
+/**
+ * POST generateContent to the first lite model that answers. A retired model (404) or a busy one
+ * (503 "high demand", 429 quota, 500) moves on to the next free lite model in the list, within one
+ * overall time budget so the serverless call still finishes in time.
+ */
 export async function generate(body: any, { models = textModels(), timeoutMs = 55_000, kind = "text" } = {}): Promise<any> {
   const key = requireKey();
-  let last: unknown = null;
+  const deadline = Date.now() + timeoutMs;
+  let last: any = null;
+  let tried = 0;
   for (const model of models) {
+    const left = deadline - Date.now();
+    if (tried && left < 8_000) break;
+    tried += 1;
     try {
       const response = await httpCall("POST", `${GEMINI_BASE}/models/${model}:generateContent`, "gemini", {
-        headers: { "x-goog-api-key": key }, json: body, timeoutMs,
+        headers: { "x-goog-api-key": key }, json: body, timeoutMs: left,
       });
       const data = await jsonOf(response, "gemini");
       record(data, model, kind);
       if (kind === "text") workingModel = model;
       return data;
     } catch (error) {
-      if (retired(error)) {
+      if (retired(error) || busy(error)) {
+        if (busy(error) && workingModel === model) workingModel = null;
         last = error;
         continue;
       }
       throw error;
     }
   }
-  throw new ApiError("No Gemini lite model is available to this key.", "Set GEMINI_MODEL on Vercel to a current flash-lite model.", (last as any)?.status);
+  if (last && busy(last)) {
+    throw new ApiError("All the free Gemini lite models are busy right now.", "This is temporary on Google's side. Wait a minute and try again: nothing is lost.", 503);
+  }
+  throw new ApiError("No Gemini lite model is available to this key.", "Set GEMINI_MODEL on Vercel to a current flash-lite model.", last?.status);
 }
 
 function textOf(data: any): string {

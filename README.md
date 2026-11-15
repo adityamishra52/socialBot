@@ -41,7 +41,7 @@ References come only from the real records you picked or added; the AI cites the
 
 ### Keeping costs low
 
-- Only Gemini **lite** models are used: text `gemini-2.5-flash-lite`, voiceovers `gemini-3.8-flash-lite-tts`, images `gemini-3.1-flash-lite-image`.
+- Only Gemini **lite** models are used: text `gemini-3.1-flash-lite` (falling back to `gemini-3.1-flash-lite-preview` and `gemini-3.5-flash-lite` when Google's servers are busy), voiceovers `gemini-3.8-flash-lite-tts`, images `gemini-3.1-flash-lite-image`.
 - AI images use the lite image model (`gemini-3.1-flash-lite-image`); set `GEMINI_IMAGE_MODEL=off` to switch them off.
 - Every Gemini call is priced from Gemini's own token counts and shown on each page, in History and on /admin.
 - Vercel Hobby and Atlas M0 (free) are enough for a small team: files are compressed in MongoDB, and MongoDB itself deletes every post, reel, campaign, email template, manuscript, book and stored file **7 days** after it was made or last changed (TTL indexes, `HISTORY_DAYS`). Users, settings, bots, unsubscribes and the **AI cost records are kept**, so costs can always be shown.
