@@ -9,7 +9,7 @@ import SharePanel from "../lib/SharePanel.jsx";
 import EbookPanel from "../lib/EbookPanel.jsx";
 import { exportDocx, downloadBlob } from "../lib/exportDocx.js";
 import { toBibtex, toRis } from "../../shared/render.ts";
-import { fillPlaceholders, findPlaceholders, guessValues, mapStrings, textsOf } from "../../shared/placeholders.ts";
+import { fillPlaceholders, findPlaceholders, guessValues, mapStrings, textsOf, wrongAboutPlaceholders } from "../../shared/placeholders.ts";
 import { chartSvg, checkChart, sourceDataCsv, suggestCharts } from "../../shared/charts.ts";
 import { readRows } from "../../shared/sheets.ts";
 
@@ -637,7 +637,7 @@ function FiguresPanel({ project, onProject, chapter }) {
 function ReviewPanel({ project, onProject, onRevise, busy }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
-  const review = project.review;
+  const review = cleanReview(project.review);
   async function run() {
     setRunning(true);
     setError(null);
@@ -674,6 +674,20 @@ function ReviewPanel({ project, onProject, onRevise, busy }) {
       )}
     </div>
   );
+}
+
+/** A saved review without advice that calls the (real) citations placeholders; reviews saved before the server dropped it had some. */
+function cleanReview(review) {
+  if (!review) return review;
+  const count = Number(review.placeholders) || 0;
+  const keep = (text) => !wrongAboutPlaceholders(text, count);
+  return {
+    ...review,
+    summary: String(review.summary || "").split(/(?<=[.!?])\s+/).filter(keep).join(" "),
+    strengths: (review.strengths || []).filter(keep), weaknesses: (review.weaknesses || []).filter(keep),
+    fixes: (review.fixes || []).filter((f) => keep(f.change) && keep(f.instruction || "")),
+    questions: (review.questions || []).filter(keep),
+  };
 }
 
 function ReferencesPanel({ project }) {

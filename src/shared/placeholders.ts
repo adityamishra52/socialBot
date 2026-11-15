@@ -22,6 +22,17 @@ export function looksLikePlaceholder(inner: string) {
 
 export const placeholderKey = (label: string) => String(label || "").trim().toLowerCase().split(/\s+/).join(" ");
 
+// Citations are ids of real, checked records ([R3], shown in the chosen reference style), never
+// placeholders. Review advice that calls them placeholders, asks about "[R#]" or wants them
+// "replaced with real sources" is wrong and is dropped.
+const CITATIONS_AS_PLACEHOLDERS = /place-?holders?\W+(?:\w+\W+){0,3}?(?:citations?|references?|sources?|bibliograph)|(?:citations?|references?|bibliograph\w*)\W+(?:\w+\W+){0,4}?place-?holders?|\[\s*R\s*[#\dxXn]|(?<![\w-])R#|citation (?:keys?|markers?|tags?|ids?)\b/i;
+
+/** True for review advice that is wrong about placeholders: calling citations placeholders, or any placeholder talk when none are left. */
+export function wrongAboutPlaceholders(text: string, count: number) {
+  const value = String(text || "");
+  return CITATIONS_AS_PLACEHOLDERS.test(value) || (count === 0 && /place-?holder/i.test(value));
+}
+
 export interface Found { key: string; label: string; count: number }
 type Path = (string | number)[];
 
