@@ -53,3 +53,16 @@
   .bn-kinds { grid-template-columns: 1fr 1fr; }
   .bn-thumb { width: calc(50% - 0.4rem); }
 }
+
+/* Share on social (Manuscript & Book Writer) */
+.sh-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.7rem; margin: 0.6rem 0 0.4rem; }
+.sh-card { display: grid; gap: 0.35rem; margin: 0; padding: 0.4rem; border-radius: 12px; border: 2px solid var(--hairline); background: var(--surface-solid); cursor: pointer; font-weight: 600; font-size: 0.8rem; }
+.sh-card canvas { width: 100%; height: auto; display: block; border-radius: 6px; }
+.sh-card span { display: flex; align-items: center; gap: 0.35rem; }
+.sh-card:not(.on) canvas { opacity: 0.35; }
+.sh-card.on { border-color: var(--brand); box-shadow: 0 0 0 3px var(--ring); }
+.sh-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid; vertical-align: -1px; }
+.sh-edit { margin-top: 0.6rem; }
+.sh-edit summary { cursor: pointer; font-weight: 600; }
+.sh-edit label { display: block; margin-top: 0.5rem; }
+.sh-edit textarea, .sh-edit input { width: 100%; }

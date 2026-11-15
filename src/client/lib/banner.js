@@ -115,6 +115,19 @@ export function wrapLines(measure, text, max) {
 
 // --- Backgrounds ---
 
+/** A whole picture (such as a book cover) centred on the background, with a soft shadow. */
+function contain(ctx, image, W, H) {
+  const scale = Math.min((W * 0.8) / image.width, (H * 0.84) / image.height);
+  const w = image.width * scale;
+  const h = image.height * scale;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = Math.min(W, H) * 0.04;
+  ctx.shadowOffsetY = Math.min(W, H) * 0.015;
+  ctx.drawImage(image, (W - w) / 2, (H - h) / 2, w, h);
+  ctx.restore();
+}
+
 function cover(ctx, image, W, H) {
   const scale = Math.max(W / image.width, H / image.height);
   const w = image.width * scale;
@@ -333,6 +346,7 @@ export function normalizeDesign(design) {
     palette: { background: d.palette?.background || "#fbf3e6", text: d.palette?.text || "#5b1a1a", accent: d.palette?.accent || "#c2410c" },
     font: FONT_SETS[d.font] ? d.font : "serif", area: AREAS[d.area] ? d.area : "top", ornament: ORNAMENTS[d.ornament] ? d.ornament : "none",
     scale: Math.max(0.6, Math.min(1.5, Number(d.scale) || 1)), fade: Math.max(0, Math.min(1, d.fade ?? 0.7)), showLogo: d.showLogo !== false,
+    artFit: d.artFit === "contain" ? "contain" : "cover", headlineLines: Math.max(1, Math.min(8, Math.round(Number(d.headlineLines) || 3))),
   };
 }
 
@@ -368,7 +382,7 @@ function layout(ctx, d, box, unit) {
       for (let i = 0; i < 30; i += 1) {
         const measure = measureWith(set.headline, size);
         lines = wrapLines(measure, headlineText, box.w);
-        if ((lines.length <= 3 && lines.every((l) => measure(l) <= box.w)) || size < u * 4) break;
+        if ((lines.length <= d.headlineLines && lines.every((l) => measure(l) <= box.w)) || size < u * 4) break;
         size *= 0.93;
       }
       const lh = size * (d.font === "script" ? 1.12 : d.font === "display" ? 0.98 : 1.1);
@@ -418,6 +432,11 @@ export function drawBanner(canvas, design, assets = {}) {
   const ctx = canvas.getContext("2d");
   const { background, text, accent } = d.palette;
   ctx.clearRect(0, 0, W, H);
+  if (assets.art && d.artFit === "contain") {
+    plainBackground(ctx, W, H, d.palette);
+    contain(ctx, assets.art, W, H);
+    return canvas;
+  }
   if (assets.art) {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, W, H);

@@ -5,6 +5,7 @@ import { Icon, PageHeader } from "../ui.jsx";
 import { readProofFile } from "../lib/readfiles.js";
 import { FONTS, PAGE_SIZES, STYLES, pageSize } from "../lib/layout.js";
 import Preview, { printPages } from "../lib/Preview.jsx";
+import SharePanel from "../lib/SharePanel.jsx";
 import { exportDocx, downloadBlob } from "../lib/exportDocx.js";
 import { toBibtex, toRis } from "../../shared/render.ts";
 import { fillPlaceholders, findPlaceholders, guessValues, mapStrings, textsOf } from "../../shared/placeholders.ts";
@@ -80,13 +81,17 @@ function NumberField({ label, value, onChange, min, max, step = 1, suffix }) {
 
 export function LayoutPanel({ mode, layout, onChange }) {
   const set = (patch) => onChange({ ...layout, ...patch });
-  const custom = layout.page_size === "custom";
+  // A custom size is a width and height of its own; 90 × 120 mm is what an old bug saved for "none".
+  const custom = layout.page_width_mm > 0 && layout.page_height_mm > 0 && !(layout.page_width_mm === 90 && layout.page_height_mm === 120);
+  const [presetWidth, presetHeight] = (PAGE_SIZES[layout.page_size] || PAGE_SIZES.a4).slice(1);
   return (
     <div className="wr-layout">
       <div className="two-col">
         <label>Page size
-          <select value={custom ? "custom" : layout.page_size} onChange={(e) => set(e.target.value === "custom" ? { page_size: "a4", page_width_mm: 170, page_height_mm: 240 } : { page_size: e.target.value, page_width_mm: 0, page_height_mm: 0 })}>
+          <select value={custom ? "custom" : layout.page_size} onChange={(e) => set(e.target.value === "custom"
+            ? { page_width_mm: presetWidth, page_height_mm: presetHeight } : { page_size: e.target.value, page_width_mm: 0, page_height_mm: 0 })}>
             {Object.entries(PAGE_SIZES).map(([key, [label]]) => <option key={key} value={key}>{label}</option>)}
+            <option value="custom">Custom size…</option>
           </select>
         </label>
         <label>Page numbers
@@ -97,8 +102,12 @@ export function LayoutPanel({ mode, layout, onChange }) {
         </label>
       </div>
       <div className="wr-grid4">
-        <NumberField label="Width (custom)" value={layout.page_width_mm || ""} min={90} max={300} suffix="mm" onChange={(v) => set({ page_width_mm: v || 0 })} />
-        <NumberField label="Height (custom)" value={layout.page_height_mm || ""} min={120} max={420} suffix="mm" onChange={(v) => set({ page_height_mm: v || 0 })} />
+        {custom && (
+          <>
+            <NumberField label="Page width" value={layout.page_width_mm || ""} min={90} max={300} suffix="mm" onChange={(v) => set({ page_width_mm: v || presetWidth })} />
+            <NumberField label="Page height" value={layout.page_height_mm || ""} min={120} max={420} suffix="mm" onChange={(v) => set({ page_height_mm: v || presetHeight })} />
+          </>
+        )}
         <NumberField label="Page numbers start at" value={layout.page_number_start} min={0} max={9999} onChange={(v) => set({ page_number_start: Number(v) || 0 })} />
         <NumberField label="Font size" value={layout.font_size} min={8} max={16} step={0.5} suffix="pt" onChange={(v) => set({ font_size: v })} />
         <NumberField label="Top margin" value={layout.margin_top} min={5} max={60} suffix="mm" onChange={(v) => set({ margin_top: v })} />
@@ -788,7 +797,7 @@ function FillPanel({ project, draft, setDraft, options, setOptions, onProject, b
 
 // --- Workspace ---
 
-function Workspace({ initial, onClose }) {
+function Workspace({ initial, onClose, me }) {
   const [project, setProject] = useState(initial);
   const [draft, setDraftState] = useState(initial.draft);
   const [options, setOptionsState] = useState(initial.options);
@@ -909,7 +918,7 @@ function Workspace({ initial, onClose }) {
       <div className="wr-split">
         <div className="wr-left card">
           <div className="segmented wr-tools">
-            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"]].map(([key, label]) => (
+            {[["edit", "Edit"], ["layout", isBook ? "Book layout" : "Page layout"], ["ai", "Revise with AI"], ["figures", "Figures"], ["review", "Quality review"], ["refs", "References"], ["share", "Share on social"]].map(([key, label]) => (
               <button key={key} type="button" className={tool === key ? "on" : ""} onClick={() => setTool(key)}>{label}</button>
             ))}
           </div>
@@ -946,6 +955,7 @@ function Workspace({ initial, onClose }) {
           {tool === "figures" && <FiguresPanel project={{ ...project, draft }} onProject={adopt} chapter={typeof part === "number" ? part : 0} />}
           {tool === "review" && <ReviewPanel project={project} onProject={(data) => setProject(data)} onRevise={(text) => { setTool("ai"); reviseWith(text); }} busy={Boolean(busy)} />}
           {tool === "refs" && <ReferencesPanel project={project} />}
+          {tool === "share" && <SharePanel project={project} draft={draft} options={options} me={me} />}
           <CostCard runs={project.usage} title="AI cost for this project" />
         </div>
         <div className="wr-right">
@@ -1146,7 +1156,7 @@ export default function Writer({ me, active }) {
   const noGemini = !me.services.gemini;
 
   if (view === "workspace" && project) {
-    return <Workspace key={project.id} initial={project} onClose={() => { setView("start"); loadProjects(); }} />;
+    return <Workspace key={project.id} initial={project} me={me} onClose={() => { setView("start"); loadProjects(); }} />;
   }
 
   return (
