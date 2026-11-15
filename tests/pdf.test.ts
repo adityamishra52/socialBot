@@ -80,6 +80,15 @@ describe("book PDF", () => {
     expect(pages.flat().some((i) => i.size < 9.5 && /^(i|ii|iii|iv|v|vi)$/.test(i.text))).toBe(true);
   });
 
+  it("prints a reference with a parallel title in Japanese without question marks", async () => {
+    const hasebe = { id: "R1", kind: "preprint", year: "2026", journal: "Zenodo", authors: [{ family: "Hasebe(長谷部)", given: "Y." }], title: "The End of AI Free-Riding (無償のAIフリーライドの終焉)" };
+    const built = await buildPdf({ ...project, references: [hasebe] }, { fonts });
+    expect(built.warnings.filter((w: string) => /show as "\?"/.test(w))).toEqual([]);
+    const text = (await textOf(built.data)).flat().map((i) => i.text).join(" ");
+    expect(text).toContain("Hasebe, 2026");
+    expect(text).not.toContain("?");
+  });
+
   it("knows which scripts need the browser's PDF", () => {
     expect(needsBrowserPdf("The AI boom")).toBe(false);
     expect(needsBrowserPdf("छठ पूजा")).toBe(true);

@@ -30,6 +30,112 @@ export function citedIds(group: string): string[] {
   return [...new Set(ids)];
 }
 
+// --- Tidying records as the services give them ---
+// Some records arrive with ALL-CAPS or lower-case names and titles, a full name in the family-name
+// field, a name or title followed by the same in another script ("Hasebe(長谷部)", which the PDF
+// fonts can't show), a publisher with its street address, or pages like "168254-168254".
+// They are tidied whenever a reference is shown, so saved projects benefit too.
+
+const LETTERS = /\p{L}/gu;
+const LATIN = /\p{Script=Latin}/gu;
+const count = (text: string, pattern: RegExp) => (text.match(pattern) || []).length;
+const mostlyLatin = (text: string) => count(text, LATIN) * 2 > count(text, LETTERS);
+const otherScript = (text: string) => count(text, LETTERS) > 0 && !mostlyLatin(text);
+const squash = (text: unknown) => String(text ?? "").split(/\s+/).filter(Boolean).join(" ");
+
+/** "English title (日本語タイトル)" → "English title": drops a parallel version in another script. */
+function dropParallel(text: string) {
+  let out = text.replace(/\s*[(（]([^()（）]*)[)）]/g, (whole, inner) => (otherScript(inner) ? "" : whole));
+  const parts = out.split(/\s+[/=]\s+/);
+  if (parts.length > 1 && parts.some(otherScript) && !parts.every(otherScript)) out = parts.filter((p) => !otherScript(p)).join(" / ");
+  out = squash(out);
+  return out && count(out, LETTERS) && mostlyLatin(out) ? out : text;
+}
+
+const PARTICLES = new Set(["van", "von", "der", "den", "de", "del", "della", "di", "da", "dos", "das", "du", "la", "le", "bin", "binti", "al", "el", "ibn", "ten", "ter"]);
+const ORGANISATION = /\b(university|association|department|institute|faculty|college|ministry|society|organi[sz]ation|council|hospital|inc|ltd|llc|gmbh|network|group|committee|consortium|collaborat\w*|foundation|agency|commission|centre|center|bank|fund|union|team|office|board)\b/i;
+
+/** "tewatiya" → "Tewatiya", "RAJAN" → "Rajan"; mixed case, initials ("M N") and particles stay. */
+function nameCase(name: string) {
+  return name.split(/(\s+)/).map((word) => {
+    const letters = word.replace(/[^\p{L}]/gu, "");
+    if (letters.length < 2 || PARTICLES.has(word.toLowerCase())) return word;
+    const upper = letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+    const lower = letters === letters.toLowerCase() && letters !== letters.toUpperCase();
+    if (!lower && !(upper && letters.length > 2)) return word;
+    return word.toLowerCase().replace(/(^|['’-])(\p{L})/gu, (_m, before, first) => before + first.toUpperCase());
+  }).join("");
+}
+
+function tidyPerson(person: Person): Person {
+  let family = dropParallel(squash(person.family));
+  let given = dropParallel(squash(person.given));
+  const words = family.split(" ");
+  // "Arpit Sidhu" with no given name: a full name in the family field (not an organisation or initials).
+  if (!given && words.length >= 2 && words.length <= 4 && !ORGANISATION.test(family) && words.some((w) => w.replace(/[^\p{L}]/gu, "").length > 1)) {
+    let start = words.length - 1;
+    while (start > 1 && PARTICLES.has(words[start - 1].toLowerCase())) start -= 1;
+    given = words.slice(0, start).join(" ");
+    family = words.slice(start).join(" ");
+  }
+  return { ...person, family: nameCase(family), given: nameCase(given) };
+}
+
+const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on", "or", "per", "the", "to", "vs", "via", "with"]);
+const ACRONYMS = new Set(["AI", "GENAI", "LLM", "LLMS", "GDP", "ESG", "HBM", "GPU", "GPUS", "CPU", "NLP", "IOT", "USA", "US", "UK", "EU", "UN", "UAE", "NATO", "OECD", "BRICS", "IMF", "WTO", "CEO", "CEOS", "ROI", "API", "APIS", "IPO", "ETF", "SME", "SMES", "ICT", "R&D", "COVID", "HIV", "AIDS", "DNA", "RNA", "ML", "VR", "XAI", "IP", "ASEAN", "SDG", "SDGS", "FDI", "ICU", "NHS", "MRI", "CT", "PCR"]);
+
+/** An ALL-CAPS title in Title Case, keeping acronyms, Roman numerals and words with digits. */
+function titleFromCaps(title: string) {
+  const upper = count(title, /\p{Lu}/gu);
+  const lower = count(title, /\p{Ll}/gu);
+  if (upper < 8 || upper < (upper + lower) * 0.85) return title;
+  let start = true;
+  return title.split(/(\s+)/).map((word) => {
+    if (/^\s+$/.test(word)) return word;
+    const key = word.replace(/[^\p{L}\d&-]/gu, "").toUpperCase();
+    const first = start;
+    start = /[:.?!]$/.test(word);
+    if (!key || ACRONYMS.has(key) || /\d/.test(key) || /^(X{0,3})(IX|IV|V?I{1,3})$/.test(key)) return word;
+    const lowered = word.toLowerCase();
+    if (!first && SMALL_WORDS.has(key.toLowerCase())) return lowered;
+    return lowered.replace(/^([^\p{L}]*)(\p{L})/u, (_m, lead, letter) => lead + letter.toUpperCase());
+  }).join("");
+}
+
+const KEEP_LOWER = new Set(["npj"]);
+
+/** "Frontiers in oncology" → "Frontiers in Oncology"; "Name/name" (the same name twice) → "Name". */
+function tidyJournal(journal: string) {
+  let out = squash(journal).replace(/\.$/, "");
+  const halves = out.split("/");
+  if (halves.length === 2 && halves[0].trim().toLowerCase() === halves[1].trim().toLowerCase()) out = halves[0].trim();
+  return out.split(" ").map((word, i) => {
+    const letters = word.replace(/[^\p{L}]/gu, "");
+    if (!letters || letters !== letters.toLowerCase() || letters === letters.toUpperCase() || KEEP_LOWER.has(letters)) return word;
+    if (i && SMALL_WORDS.has(letters)) return word;
+    return word.replace(/\p{L}/u, (letter) => letter.toUpperCase());
+  }).join(" ");
+}
+
+/** "CSIRO Publishing36 Gardiner Road, Clayton VIC 3168…" → "CSIRO Publishing"; no closing full stop. */
+function tidyPublisher(publisher: string) {
+  let out = squash(publisher);
+  const digit = out.search(/\d/);
+  if (out.length > 30 && digit > 3) out = out.slice(0, digit);
+  return out.replace(/[\s,;:.]+$/, "");
+}
+
+/** A reference with its names, title, journal, publisher, issue and pages tidied for display. */
+export function tidyReference(ref: Reference): Reference {
+  const title = titleFromCaps(dropParallel(squash(ref.title))).replace(/(\p{L})([“"])(?=\p{L})/gu, "$1 $2");
+  const pages = squash(ref.pages).replace(/^(\w+)\s*[-–]\s*\1$/, "$1");
+  const issue = squash(ref.issue).replace(/^0*(\d+)\s*[-–]\s*\p{L}+\.?$/u, "$1").replace(/^0+(?=\d)/, "");
+  return {
+    ...ref, title, pages, issue, authors: (ref.authors || []).map(tidyPerson).filter((p) => p.family),
+    ...(ref.journal ? { journal: tidyJournal(ref.journal) } : {}), ...(ref.publisher ? { publisher: tidyPublisher(ref.publisher) } : {}),
+  };
+}
+
 const initials = (given = "", dots: boolean) => given.split(/[\s-]+/).filter((p) => /^\p{L}/u.test(p)).map((p) => (dots ? `${p[0]}.` : p[0])).join(dots ? " " : "");
 
 function authorList(ref: Reference, style: string): string {
@@ -78,7 +184,8 @@ function formatBook(ref: Reference, style: string, authors: string, title: strin
 }
 
 /** One reference in a style. *Asterisks* mark italics. */
-export function formatReference(ref: Reference, style: string): string {
+export function formatReference(record: Reference, style: string): string {
+  const ref = tidyReference(record);
   const authors = authorList(ref, style);
   const title = ref.title.replace(/\.$/, "");
   const journal = ref.journal || "";
@@ -147,7 +254,8 @@ export function formatReference(ref: Reference, style: string): string {
 function inText(ref: Reference, style: string) {
   const people = ref.authors || [];
   const year = ref.year || "n.d.";
-  if (!people.length) return `${ref.title.split(/\s+[-|–—]\s+/)[0].split(/\s+/).slice(0, 4).join(" ")}${style === "mla" ? "" : `, ${year}`}`;
+  // No author: the first words of the title, up to a colon or dash, without trailing punctuation.
+  if (!people.length) return `${ref.title.split(/:|\s+[-|–—]\s+/)[0].split(/\s+/).slice(0, 5).join(" ").replace(/[\s,;:.]+$/, "")}${style === "mla" ? "" : `, ${year}`}`;
   const names = people.length === 1 ? people[0].family
     : people.length === 2 ? `${people[0].family} ${style === "apa" ? "&" : "and"} ${people[1].family}` : `${people[0].family} et al.`;
   return style === "mla" ? names : `${names}${style === "chicago" ? " " : ", "}${year}`;
@@ -191,7 +299,7 @@ function place(sections: Section[], label: string, number: number, after: string
 
 /** Citation numbering and formatting for a list of texts read in order. */
 export function citer(refs: Reference[], style: string) {
-  const byId = new Map(refs.map((r) => [r.id, r]));
+  const byId = new Map(refs.map((r) => [r.id, tidyReference(r)]));
   const order: string[] = [];
   const visit = (text: string) => {
     for (const match of String(text || "").matchAll(new RegExp(CITE.source, "g"))) {
@@ -295,7 +403,7 @@ const bibKey = (ref: Reference, used: Set<string>) => {
 
 export function toBibtex(refs: Reference[]) {
   const used = new Set<string>();
-  return refs.map((ref) => {
+  return refs.map(tidyReference).map((ref) => {
     const type = ref.kind === "book" ? "book" : ref.journal ? "article" : "misc";
     const fields: [string, string | undefined][] = [
       ["title", ref.title], ["author", (ref.authors || []).map((a) => `${a.family}, ${a.given || ""}`.trim().replace(/,$/, "")).join(" and ")],
@@ -307,7 +415,7 @@ export function toBibtex(refs: Reference[]) {
 }
 
 export function toRis(refs: Reference[]) {
-  return refs.map((ref) => {
+  return refs.map(tidyReference).map((ref) => {
     const lines = [`TY  - ${ref.kind === "book" ? "BOOK" : ref.journal ? "JOUR" : "GEN"}`, `TI  - ${ref.title}`];
     for (const a of ref.authors || []) lines.push(`AU  - ${a.family}${a.given ? `, ${a.given}` : ""}`);
     if (ref.journal) lines.push(`JO  - ${ref.journal}`);
