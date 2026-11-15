@@ -12,9 +12,41 @@ export const PAGE_SIZES = {
 export const FONTS = ["Times New Roman", "Georgia", "Garamond", "Palatino Linotype", "Cambria", "Book Antiqua", "Source Serif 4", "Arial"];
 export { STYLES };
 
+/** True when the author set their own page size. Earlier versions saved "none" as 90 x 120 mm: that isn't one. */
+export function isCustomSize(layout) {
+  const w = Number(layout?.page_width_mm);
+  const h = Number(layout?.page_height_mm);
+  return w > 0 && h > 0 && !(w === 90 && h === 120);
+}
+
 export function pageSize(layout) {
   const [, w, h] = PAGE_SIZES[layout.page_size] || PAGE_SIZES.a4;
-  return [layout.page_width_mm || w, layout.page_height_mm || h];
+  return isCustomSize(layout) ? [Number(layout.page_width_mm), Number(layout.page_height_mm)] : [w, h];
+}
+
+const FURNITURE_LINE_MM = 3.6; // a 9 pt running header or page number
+const FURNITURE_GAP_MM = 4; // between it and the text
+const FURNITURE_EDGE_MM = 3; // nearest it may come to the paper's edge
+
+/**
+ * Where the running header and the page number go: in the top or bottom margin, about 4 mm from
+ * the text. `offset` is the distance from the paper's edge; `push` is how far the text has to
+ * move in when the margin is too small to hold them.
+ */
+export function furniture(layout) {
+  const position = layout.page_number_position || "bottom-center";
+  const numberTop = position !== "none" && position.startsWith("top");
+  const numberBottom = position !== "none" && !numberTop;
+  const place = (margin) => {
+    const want = (Number(margin) || 0) - FURNITURE_GAP_MM - FURNITURE_LINE_MM;
+    return { offset: Math.max(FURNITURE_EDGE_MM, want), push: Math.max(0, FURNITURE_EDGE_MM - want) };
+  };
+  const none = { offset: 0, push: 0 };
+  return {
+    position, numberTop, numberBottom,
+    top: layout.running_headers || numberTop ? place(layout.margin_top) : none,
+    bottom: numberBottom ? place(layout.margin_bottom) : none,
+  };
 }
 
 export function roman(n) {

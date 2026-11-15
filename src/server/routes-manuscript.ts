@@ -37,13 +37,24 @@ const pick = (value: unknown, allowed: string[] | Record<string, unknown>, fallb
 };
 const flag = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
 
+/** A custom page size: both sides given, or 0 x 0 for the chosen standard size. */
+function customSize(width: unknown, height: unknown): [number, number] {
+  const w = Number(width);
+  const h = Number(height);
+  if (!(w > 0) || !(h > 0)) return [0, 0];
+  // Earlier versions saved "no custom size" as 90 x 120 mm (the smallest allowed): treat that as none.
+  if (w === 90 && h === 120) return [0, 0];
+  return [Math.min(300, Math.max(90, w)), Math.min(420, Math.max(120, h))];
+}
+
 /** Page layout: book name, page size, margins, page numbers... Used by the preview, DOCX and print. */
 export function layoutOptions(raw: any, mode: string) {
   const r = raw && typeof raw === "object" ? raw : {};
   const book = mode === "book";
+  const [pageWidth, pageHeight] = customSize(r.page_width_mm, r.page_height_mm);
   return {
     page_size: pick(r.page_size, PAGE_SIZES, book ? "6x9" : "a4"),
-    page_width_mm: clampNumber(r.page_width_mm, 90, 300, 0), page_height_mm: clampNumber(r.page_height_mm, 120, 420, 0),
+    page_width_mm: pageWidth, page_height_mm: pageHeight,
     margin_top: clampNumber(r.margin_top, 5, 60, book ? 20 : 25), margin_bottom: clampNumber(r.margin_bottom, 5, 60, book ? 20 : 25),
     margin_inside: clampNumber(r.margin_inside, 5, 60, book ? 22 : 25), margin_outside: clampNumber(r.margin_outside, 5, 60, book ? 16 : 25),
     gutter: clampNumber(r.gutter, 0, 30, 0), mirror_margins: flag(r.mirror_margins, book),

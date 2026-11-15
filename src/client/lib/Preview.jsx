@@ -1,11 +1,10 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { buildBlocks, pageSize, roman, runs } from "./layout.js";
+import { buildBlocks, furniture, pageSize, roman, runs } from "./layout.js";
 
 // The right-hand preview: the document laid out on real pages (size, margins, mirrored inside
 // margins, page numbers from the chosen start, running headers, chapters on new or odd pages).
 
 const PX = 96 / 25.4;
-const HEADER_MM = 8;
 
 export function Inline({ text }) {
   return runs(text).map((run, i) => (run.placeholder ? <mark key={i} className="ph">{run.text}</mark>
@@ -93,19 +92,27 @@ function useDocStyle(layout) {
   }), [layout]);
 }
 
-/** Lay the blocks out on pages. Returns pages of { blocks, label, front, physical }. */
-function paginate(blocks, heights, measureText, available, layout, isBook) {
+/**
+ * Lay the blocks out on pages. Returns pages of { blocks, label, front, physical }.
+ * `heights` are the blocks' measured heights (px, paragraph gap included); `measureText(block, room)`
+ * splits a paragraph so its first part fits in `room` px ({ head, tail, tailHeight }) or returns null.
+ * Nothing is placed past `available`, except a block that can't be split and is taller than a page.
+ */
+export function paginate(blocks, heights, measureText, available, layout, isBook) {
   const pages = [];
   let current = null;
   let used = 0;
   let mainStarted = !isBook;
+  // A paragraph is split only when at least two of its lines fit in the room left.
+  const minRoom = 2 * (Number(layout.font_size) || 12) * (96 / 72) * (Number(layout.line_spacing) || 1.5);
   const open = (front) => {
     current = { blocks: [], front, mainStart: false };
     pages.push(current);
     used = 0;
   };
   open(Boolean(blocks[0]?.front));
-  blocks.forEach((block, index) => {
+  blocks.forEach((original, index) => {
+    let block = original;
     if (block.breakBefore && current.blocks.length) open(Boolean(block.front));
     if (block.breakBefore && block.odd && pages.length % 2 === 0) {
       // A chapter on an odd page: leave a blank left-hand page.
@@ -118,21 +125,24 @@ function paginate(blocks, heights, measureText, available, layout, isBook) {
       mainStarted = true;
     }
     current.front = Boolean(block.front);
-    let height = heights[index];
+    let height = heights[index] || 0;
     const next = heights[index + 1] || 0;
     const isHeading = ["h1", "h2", "chapter-title"].includes(block.type);
-    if (used + height > available && current.blocks.length) {
-      if (block.type === "p" && available - used > 60) {
-        const split = measureText(block.text, available - used);
-        if (split) {
-          current.blocks.push({ ...block, text: split.head });
-          open(Boolean(block.front));
-          block = { ...block, text: split.tail, cont: true, drop: false };
-          height = split.tailHeight;
-        } else open(Boolean(block.front));
-      } else open(Boolean(block.front));
-    } else if (isHeading && current.blocks.length && used + height + Math.min(next, 60) > available) {
+    if (isHeading && current.blocks.length && used + height + Math.min(next, 60) > available) {
       open(Boolean(block.front)); // Keep a heading with what follows it.
+    }
+    // A long paragraph continues over as many pages as it needs.
+    for (let guard = 0; used + height > available && guard < 1000; guard += 1) {
+      const room = available - used;
+      const split = block.type === "p" && room >= minRoom ? measureText(block, room) : null;
+      if (split) {
+        current.blocks.push({ ...block, text: split.head });
+        open(Boolean(block.front));
+        block = { ...block, text: split.tail, cont: true, drop: false };
+        height = split.tailHeight;
+      } else if (current.blocks.length) {
+        open(Boolean(block.front));
+      } else break; // Taller than a page and can't be split: it goes on a page of its own.
     }
     current.blocks.push(block);
     used += height;
@@ -164,8 +174,9 @@ export default function Preview({ project, zoom = 0.62, onPages, pagesRef }) {
   const { blocks } = useMemo(() => buildBlocks(project), [project]);
   const [width, height] = pageSize(layout);
   const contentWidth = (width - layout.margin_inside - layout.margin_outside - (layout.gutter || 0)) * PX;
-  const reserved = (layout.running_headers ? HEADER_MM : 0) + (layout.page_number_position !== "none" ? HEADER_MM : 0);
-  const available = (height - layout.margin_top - layout.margin_bottom - reserved) * PX;
+  // The running header and page number sit in the margins; the text moves in only if a margin is too small for them.
+  const place = furniture(layout);
+  const available = (height - layout.margin_top - layout.margin_bottom - place.top.push - place.bottom.push) * PX;
   const docStyle = useDocStyle(layout);
   const measurer = useRef(null);
   const probe = useRef(null);
@@ -176,24 +187,33 @@ export default function Preview({ project, zoom = 0.62, onPages, pagesRef }) {
     const box = measurer.current;
     if (!box) return;
     const heights = [...box.children].map((child) => child.getBoundingClientRect().height);
-    const measureText = (text, room) => {
+    // The probe is a paragraph inside a .pv-doc, styled like the part being measured (first part
+    // indented and with its drop capital, continuation not); its gap below is counted too.
+    const measureText = (block, room) => {
       const el = probe.current;
-      const words = text.split(/\s+/);
+      const words = String(block.text || "").split(/\s+/).filter(Boolean);
       if (words.length < 12) return null;
+      const heightOf = (text, classes) => {
+        el.className = classes;
+        el.textContent = text;
+        return el.getBoundingClientRect().height + (parseFloat(getComputedStyle(el).marginBottom) || 0);
+      };
+      const headClasses = `pv-p${block.cont ? " cont" : ""}${block.drop ? " drop" : ""}`;
       let low = 1;
       let high = words.length - 1;
       let best = 0;
       while (low <= high) {
         const mid = (low + high) >> 1;
-        el.textContent = words.slice(0, mid).join(" ");
-        if (el.getBoundingClientRect().height <= room) {
+        if (heightOf(words.slice(0, mid).join(" "), headClasses) <= room) {
           best = mid;
           low = mid + 1;
         } else high = mid - 1;
       }
-      if (best < 4 || words.length - best < 3) return null;
-      el.textContent = words.slice(best).join(" ");
-      const tailHeight = el.getBoundingClientRect().height;
+      if (best < 4 || words.length - best < 3) {
+        el.textContent = "";
+        return null;
+      }
+      const tailHeight = heightOf(words.slice(best).join(" "), "pv-p cont");
       el.textContent = "";
       return { head: words.slice(0, best).join(" "), tail: words.slice(best).join(" "), tailHeight };
     };
@@ -215,7 +235,7 @@ export default function Preview({ project, zoom = 0.62, onPages, pagesRef }) {
         <div ref={measurer} className="pv-doc">
           {blocks.map((block, i) => <div key={i} className="pv-cell"><Block block={block} toc={tocProbe} /></div>)}
         </div>
-        <p ref={probe} className="pv-p" />
+        <div className="pv-doc"><p ref={probe} className="pv-p" /></div>
       </div>
       <div className="pv-pages" ref={pagesRef} data-width={width} data-height={height}>
         {pages.map((page) => {
@@ -227,19 +247,30 @@ export default function Preview({ project, zoom = 0.62, onPages, pagesRef }) {
           const header = layout.running_headers && !page.hideNumber && !page.blocks.some((b) => b.type === "chapter-title")
             ? (right ? chapter : project.draft?.title || project.options?.book_name || "") : "";
           const numberAlign = position.endsWith("center") ? "center" : (right || !mirror ? "right" : "left");
+          const showNumber = position !== "none" && !page.hideNumber;
+          // With the page number at the top too, the header moves out of its way: centred when the
+          // number is in the outside corner, at the outside edge (and kept short) when it is centred.
+          const headerAlign = place.numberTop && position === "top-outside" ? "center" : right ? "right" : "left";
+          const headerMax = place.numberTop && position === "top-center" ? "40%" : place.numberTop ? "62%" : "100%";
+          const left = mirror && !right ? outside : inside;
+          const rightEdge = mirror && !right ? inside : outside;
           return (
             <div key={page.physical} className="pv-page" style={{
               width: `${width}mm`, height: `${height}mm`, paddingTop: `${layout.margin_top}mm`, paddingBottom: `${layout.margin_bottom}mm`,
-              paddingLeft: mirror && !right ? outside : inside, paddingRight: mirror && !right ? inside : outside,
+              paddingLeft: left, paddingRight: rightEdge,
             }}>
-              {header && <div className="pv-running" style={{ top: `${Math.max(4, layout.margin_top - 9)}mm`, left: mirror && !right ? outside : inside, right: mirror && !right ? inside : outside, textAlign: right ? "right" : "left" }}>{header}</div>}
-              <div className="pv-doc" style={{ ...docStyle, paddingTop: layout.running_headers ? `${HEADER_MM}mm` : 0 }}>
+              {header && (
+                <div className="pv-running" style={{ top: `${place.top.offset}mm`, left, right: rightEdge, textAlign: headerAlign, fontFamily: docStyle.fontFamily }}>
+                  <span style={{ maxWidth: headerMax }}>{header}</span>
+                </div>
+              )}
+              <div className="pv-doc" style={{ ...docStyle, paddingTop: `${place.top.push}mm` }}>
                 {page.blocks.map((block, i) => <div key={i} className="pv-cell"><Block block={block} toc={toc} /></div>)}
               </div>
-              {position !== "none" && !page.hideNumber && (
+              {showNumber && (
                 <div className="pv-number" style={{
-                  [position.startsWith("top") ? "top" : "bottom"]: `${Math.max(4, (position.startsWith("top") ? layout.margin_top : layout.margin_bottom) - 9)}mm`,
-                  left: mirror && !right ? outside : inside, right: mirror && !right ? inside : outside, textAlign: numberAlign,
+                  [place.numberTop ? "top" : "bottom"]: `${place.numberTop ? place.top.offset : place.bottom.offset}mm`,
+                  left, right: rightEdge, textAlign: numberAlign, fontFamily: docStyle.fontFamily,
                 }}>{page.label}</div>
               )}
             </div>

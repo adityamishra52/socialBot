@@ -97,8 +97,9 @@ label.button:hover { border-color: #a1a1aa; }
 .pv-page { position: relative; box-sizing: border-box; background: #fff; color: #111; box-shadow: 0 4px 18px rgba(15, 23, 42, 0.18); overflow: hidden; flex: none; }
 .pv-doc { color: #111; overflow-wrap: break-word; hyphens: auto; }
 .pv-cell { display: flow-root; }
-.pv-running, .pv-number { position: absolute; font-size: 9pt; color: #444; }
+.pv-running, .pv-number { position: absolute; font-size: 9pt; line-height: 1.15; color: #444; }
 .pv-running { font-style: italic; }
+.pv-running span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
 .pv-doc p { margin: 0; }
 .pv-p { text-indent: var(--indent); margin-bottom: var(--gap) !important; }
 .pv-p.cont { text-indent: 0; }

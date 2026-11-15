@@ -1,4 +1,4 @@
-import { buildBlocks, pageSize, runs } from "./layout.js";
+import { buildBlocks, furniture, pageSize, runs } from "./layout.js";
 import { svgToPng } from "./images.js";
 
 // The Word file is built in the browser with the "docx" library, from the same blocks as the preview.
@@ -128,12 +128,15 @@ export async function exportDocx(project) {
   if (children.length) sections.push({ children, odd: currentOdd, title: currentTitle });
 
   const position = layout.page_number_position || "bottom-center";
+  const place = furniture(layout);
   const numberParagraph = (alignment) => new Paragraph({ alignment, children: [new TextRun({ children: [PageNumber.CURRENT], size: size - 2, font })] });
   const numberAlign = position.endsWith("center") ? AlignmentType.CENTER : AlignmentType.RIGHT;
   const page = {
     size: { width: Math.round(width * TWIP), height: Math.round(height * TWIP) },
     margin: { top: Math.round(layout.margin_top * TWIP), bottom: Math.round(layout.margin_bottom * TWIP), left: Math.round(layout.margin_inside * TWIP),
-      right: Math.round(layout.margin_outside * TWIP), gutter: Math.round((layout.gutter || 0) * TWIP), mirror: Boolean(layout.mirror_margins), header: 400, footer: 400 },
+      right: Math.round(layout.margin_outside * TWIP), gutter: Math.round((layout.gutter || 0) * TWIP), mirror: Boolean(layout.mirror_margins),
+      // The header and footer sit in the margins about 4 mm from the text, as in the preview.
+      header: Math.round((place.top.offset || Math.max(3, layout.margin_top - 7.6)) * TWIP), footer: Math.round((place.bottom.offset || Math.max(3, layout.margin_bottom - 7.6)) * TWIP) },
   };
   const numbered = (format, start) => ({ ...page, pageNumbers: { start, formatType: format } });
   const pageBits = (title) => {
