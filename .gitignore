@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build output and dependencies
+node_modules/
+.output/
+.vercel/
+.nitro/
+.tanstack/
+dist/
+*.log
+
+# The old Python + Vite version, kept locally for reference only
+_legacy/
+
+# Editor and tool settings
+.claude/
