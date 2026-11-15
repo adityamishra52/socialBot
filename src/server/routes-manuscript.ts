@@ -218,6 +218,11 @@ async function runStep(project: any, origin: string) {
     if (project.mode === "book") {
       const chapter = await writeChapter(project, project.cursor);
       project.draft.chapters[project.cursor] = chapter;
+      const written = chapter.sections.reduce((n: number, s: any) => n + s.paragraphs.join(" ").split(/\s+/).filter(Boolean).length, 0);
+      const target = Number(project.options.words_per_chapter) || 2500;
+      if (written < target * 0.7) {
+        project.warnings = [...(project.warnings || []), `Chapter ${project.cursor + 1} has ${written.toLocaleString("en-US")} words (you asked for about ${target.toLocaleString("en-US")}). To lengthen it, open "Revise with AI", choose the chapter and ask: "Expand every section with more detail and examples".`];
+      }
       project.cursor += 1;
       if (project.cursor >= project.plan.chapters.length) project.stage = "finish";
     } else {
