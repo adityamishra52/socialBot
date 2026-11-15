@@ -156,6 +156,12 @@ function Research({ mode, topic, from, to, onRange, state, setState }) {
   }
   const shown = (state.results || []).filter((r) => !filter.trim() || `${r.title} ${r.authors} ${r.venue}`.toLowerCase().includes(filter.trim().toLowerCase()));
   const toggle = (id) => setState({ ...state, selected: state.selected.includes(id) ? state.selected.filter((x) => x !== id) : [...state.selected, id] });
+  // With a filter typed, these act on the titles shown; without one, on all of them.
+  const shownIds = shown.map((r) => r.id);
+  const allShownSelected = shownIds.length > 0 && shownIds.every((id) => (state.selected || []).includes(id));
+  const someShownSelected = shownIds.some((id) => (state.selected || []).includes(id));
+  const selectAll = () => setState({ ...state, selected: [...new Set([...(state.selected || []), ...shownIds])] });
+  const unselectAll = () => setState({ ...state, selected: (state.selected || []).filter((id) => !shownIds.includes(id)) });
   return (
     <div>
       <p className="lead">Search free scholarly sources for published work on your topic. Pick the titles to cite: references are built only from these real records.</p>
@@ -178,10 +184,19 @@ function Research({ mode, topic, from, to, onRange, state, setState }) {
       {state.results && (
         <div className="wr-results">
           <div className="wr-results-head">
-            <strong>{state.results.length} titles found · {state.selected.length} selected</strong>
+            <label className="wr-select-all">
+              <input type="checkbox" aria-label={allShownSelected ? "Unselect all titles" : "Select all titles"}
+                checked={allShownSelected} ref={(el) => { if (el) el.indeterminate = someShownSelected && !allShownSelected; }}
+                onChange={() => (allShownSelected ? unselectAll() : selectAll())} />
+              <strong>{state.selected.length} of {state.results.length} selected</strong>
+            </label>
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter the list" aria-label="Filter the results" />
-            <button type="button" className="small" onClick={() => setState({ ...state, selected: [...new Set([...state.selected, ...shown.map((r) => r.id)])] })}>Select shown</button>
-            <button type="button" className="small" onClick={() => setState({ ...state, selected: [] })}>Clear</button>
+            <button type="button" className="small" onClick={selectAll} disabled={allShownSelected}>
+              {filter.trim() ? `Select all ${shown.length} shown` : "Select all"}
+            </button>
+            <button type="button" className="small" onClick={unselectAll} disabled={!someShownSelected}>
+              {filter.trim() ? "Unselect shown" : "Unselect all"}
+            </button>
           </div>
           <ol className="wr-result-list">
             {shown.map((r) => (

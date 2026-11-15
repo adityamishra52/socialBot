@@ -139,3 +139,6 @@ label.button:hover { border-color: #a1a1aa; }
 .pv-toc-line { display: flex; gap: 0.4em; align-items: baseline; margin-bottom: 0.35em !important; }
 .pv-dots { flex: 1; border-bottom: 1px dotted #888; transform: translateY(-0.25em); }
 mark.ph { background: #fff3a3; color: #111; padding: 0 0.1em; border-radius: 2px; }
+
+.wr-select-all { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 500; }
+.wr-select-all input { width: 18px; height: 18px; }
