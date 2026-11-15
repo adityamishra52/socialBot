@@ -9,6 +9,7 @@ import { downloadBlob, exportDocx } from "./exportDocx.js";
 import { svgToPng } from "./images.js";
 import { pageSize } from "./layout.js";
 import { STORE_STEPS, kitZip, listingText, needsBrowserPdf, paperbackNotes, stepsText } from "./publishKit.js";
+import { PAPERS, coverDpi, drawPaperback, paperbackGeometry, paperbackPdf, paperbackSummary } from "./paperbackCover.js";
 import { THEMES } from "./SharePanel.jsx";
 
 // Publishing kit for Amazon KDP, Google Play Books and Draft2Digital: the EPUB, a print-ready PDF,
@@ -69,7 +70,11 @@ export default function EbookPanel({ project, draft, options }) {
   const [listing, setListing] = useState(null);
   const [usage, setUsage] = useState([]);
   const [fontsReady, setFontsReady] = useState(false);
+  const [paper, setPaper] = useState("white");
+  const [pagesInput, setPagesInput] = useState("");
+  const [guides, setGuides] = useState(true);
   const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
 
   useEffect(() => {
     loadBannerFonts().then(() => setFontsReady(true));
@@ -102,6 +107,29 @@ export default function EbookPanel({ project, draft, options }) {
     const fonts = await loadPdfFonts(PDF_FONTS[options?.layout?.font] || "tinos");
     return buildPdf(book, { fonts, loadFigure, language: lang });
   }
+  // Paperback cover (KDP print): back, spine and front in one PDF.
+  const trim = pageSize(options?.layout || {});
+  const pages = Number(pagesInput) || made.pdf?.pages || 0;
+  const palette = (THEMES[theme] || THEMES.classic).palette;
+  const frontPanel = () => (own ? { image: own } : { design: { ...design, aspect: "4:5" }, art });
+  const backWords = {
+    palette, font, ornament: "none", scale: 0.85, headlineLines: 3,
+    headline: listing?.tagline || "", message: listing?.description || draft?.blurb || "",
+    byline: listing?.author_bio ? `About the author: ${listing.author_bio}` : "",
+  };
+  const wrapSettings = (guidesOn) => ({ palette, front: frontPanel(), back: backWords, title: draft?.title || "", author: options?.authors || "", font, guides: guidesOn });
+  async function paperbackBytes(count) {
+    const g = paperbackGeometry(trim[0], trim[1], count, paper);
+    const dpi = coverDpi(g);
+    const canvas = drawPaperback(document.createElement("canvas"), g, { ...wrapSettings(false), dpi });
+    return { data: await paperbackPdf(canvas, g, draft?.title), g, dpi };
+  }
+  const wrap = pages ? paperbackGeometry(trim[0], trim[1], pages, paper) : null;
+  // The small preview redraws after every change (it is drawn at 40 DPI, so this is quick).
+  useEffect(() => {
+    if (wrapRef.current && wrap) drawPaperback(wrapRef.current, wrap, { ...wrapSettings(guides), dpi: 40 });
+  });
+
   const pdfInfo = (built) => ({ pages: built.pages, warnings: built.warnings, size: built.data.length, ...paperbackNotes(options?.layout || {}, built.pages, pageSize(options?.layout || {})) });
 
   async function run(label, work) {
@@ -132,6 +160,18 @@ export default function EbookPanel({ project, draft, options }) {
   const downloadWord = () => run("docx", async () => {
     downloadBlob(await exportDocx(book), `${slug}.docx`);
   });
+  const downloadPaperback = () => run("paperback", async () => {
+    let count = pages;
+    if (!count && !browserPdfOnly) {
+      const built = await makePdf();
+      setMade((m) => ({ ...m, pdf: pdfInfo(built) }));
+      count = built.pages;
+    }
+    if (!count) throw new Error("Enter the book's page count (the number of pages in the interior PDF).");
+    const { data, g, dpi } = await paperbackBytes(count);
+    downloadBlob(new Blob([data], { type: "application/pdf" }), `${slug}-paperback-cover.pdf`);
+    setMade((m) => ({ ...m, paperback: { ...paperbackSummary(g, dpi), bytes: data.length } }));
+  });
   const writeListing = () => run("listing", async () => {
     const data = await api(`/api/manuscript/${project.id}/listing`, { method: "POST" });
     if (data.usage) setUsage((old) => [...old, data.usage]);
@@ -142,7 +182,12 @@ export default function EbookPanel({ project, draft, options }) {
     const epub = await makeEpub(cover);
     const pdf = browserPdfOnly ? null : await makePdf();
     const docx = await bytesOf(await exportDocx(book));
-    const files = { [`${slug}.epub`]: epub.data, ...(pdf ? { [`${slug}.pdf`]: pdf.data } : {}), [`${slug}-cover.jpg`]: cover, [`${slug}.docx`]: docx };
+    const count = Number(pagesInput) || pdf?.pages || 0;
+    const paperback = count ? await paperbackBytes(count) : null;
+    const files = {
+      [`${slug}.epub`]: epub.data, ...(pdf ? { [`${slug}.pdf`]: pdf.data } : {}), [`${slug}-cover.jpg`]: cover,
+      ...(paperback ? { [`${slug}-paperback-cover.pdf`]: paperback.data } : {}), [`${slug}.docx`]: docx,
+    };
     const info = pdf ? pdfInfo(pdf) : null;
     files["store-listing.txt"] = listingText({ draft, options, listing, pages: pdf?.pages, words, language: lang, size: info?.inches });
     files["how-to-upload.txt"] = stepsText(Object.keys(files).concat("how-to-upload.txt"));
@@ -165,7 +210,7 @@ export default function EbookPanel({ project, draft, options }) {
   const setField = (key, value) => setListing((old) => ({ ...old, [key]: value }));
   const lines = (text) => text.split("\n").map((l) => l.trim()).filter(Boolean);
   const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  const BUSY = { epub: "Making the EPUB…", pdf: "Typesetting the PDF…", kit: "Making all the files… (up to a minute for a long book)", listing: "Writing the listing…" };
+  const BUSY = { epub: "Making the EPUB…", pdf: "Typesetting the PDF…", paperback: "Making the paperback cover…", kit: "Making all the files… (up to a minute for a long book)", listing: "Writing the listing…" };
 
   return (
     <div className="wr-panel eb-panel">
@@ -222,7 +267,7 @@ export default function EbookPanel({ project, draft, options }) {
       <div className="actions">
         <button className="accent" onClick={downloadKit} disabled={Boolean(busy)}><Icon name="download" /> {busy === "kit" ? BUSY.kit : "Download the publishing kit (ZIP)"}</button>
       </div>
-      <p className="field-note">One ZIP with the EPUB, PDF, front cover, Word file, the store listing and the upload steps{listing ? "" : " (write the store listing below first to include it)"}.</p>
+      <p className="field-note">One ZIP with the EPUB, PDF, front cover, KDP paperback cover, Word file, the store listing and the upload steps{listing ? "" : " (write the store listing below first: it goes in the kit and on the paperback's back cover)"}.</p>
       <div className="actions tight">
         <button type="button" onClick={downloadEpub} disabled={Boolean(busy)}><Icon name="download" /> {busy === "epub" ? BUSY.epub : "EPUB"}</button>
         <button type="button" onClick={downloadPdf} disabled={Boolean(busy) || browserPdfOnly}><Icon name="download" /> {busy === "pdf" ? BUSY.pdf : "PDF"}</button>
@@ -246,6 +291,41 @@ export default function EbookPanel({ project, draft, options }) {
       )}
       {busy && BUSY[busy] && <p className="muted-text"><span className="job-orb small" aria-hidden="true" /> {BUSY[busy]}</p>}
       <ErrorNote error={error} />
+
+      <h3 className="wr-h">Paperback cover for KDP (PDF)</h3>
+      <p className="field-note">
+        For <em>Upload a cover you already have (print-ready PDF only)</em>: one PDF with the back cover, spine and front cover, sized like KDP's
+        Cover Calculator for your page size, page count and paper. The back carries the description{listing?.author_bio ? " and author bio" : ""} from the store listing.
+      </p>
+      <div className="two-col">
+        <label>Paper
+          <select value={paper} onChange={(e) => setPaper(e.target.value)}>{Object.entries(PAPERS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        </label>
+        <label>Page count
+          <input type="number" min={24} max={828} value={pagesInput} placeholder={made.pdf?.pages ? `${made.pdf.pages} (from the PDF)` : "Taken from the PDF"}
+            onChange={(e) => setPagesInput(e.target.value)} />
+        </label>
+      </div>
+      {wrap ? (
+        <>
+          <canvas ref={wrapRef} className="eb-wrap" role="img" aria-label="Paperback cover: back, spine and front" />
+          <label className="check"><input type="checkbox" checked={guides} onChange={(e) => setGuides(e.target.checked)} /> Show the trim line, spine, safe area and barcode box (not printed)</label>
+          <p className="field-note">{paperbackSummary(wrap, coverDpi(wrap)).text} Check it with KDP's Cover Calculator, which uses the same formula.</p>
+          <ul className="field-note eb-notes">
+            {!wrap.spineText && <li>No words on the spine: KDP allows spine text from 79 pages.</li>}
+            {wrap.pages < 24 && <li className="warn-text">KDP paperbacks need at least 24 pages.</li>}
+            {own && own.width / wrap.front.w < 300 && <li className="warn-text">Your finished cover prints at about {Math.round(own.width / wrap.front.w)} DPI on the front; KDP asks for 300 DPI (an image at least {Math.ceil(wrap.front.w * 300)} px wide).</li>}
+            {!listing && <li>Write the store listing below to put the description and author bio on the back cover (the back-cover blurb is used meanwhile).</li>}
+            <li>On KDP, leave "Yes, my cover has a barcode" unticked: KDP prints the barcode in the clear corner of the back cover.</li>
+          </ul>
+        </>
+      ) : <p className="note">Make the PDF above, or type the page count, to size the spine.</p>}
+      <div className="actions tight">
+        <button type="button" className="accent" onClick={downloadPaperback} disabled={Boolean(busy) || (!wrap && browserPdfOnly)}>
+          <Icon name="download" /> {busy === "paperback" ? BUSY.paperback : "Download the paperback cover (PDF)"}
+        </button>
+      </div>
+      {made.paperback && <p className="field-note">Paperback cover ({mb(made.paperback.bytes)}): {made.paperback.text}</p>}
 
       <h3 className="wr-h">Store listing</h3>
       <p className="field-note">The description, 7 keywords, categories, audience and author bio, written from the book for the three stores' forms. It never invents reviews, awards or credentials.</p>

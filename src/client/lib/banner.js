@@ -94,6 +94,11 @@ const font = ([weight, family], size) => `${weight} ${Math.round(size)}px "${fam
 export function wrapLines(measure, text, max) {
   const out = [];
   for (const paragraph of String(text || "").split(/\n/)) {
+    // A blank line between paragraphs stays as a gap (once, never at the start).
+    if (!paragraph.trim()) {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      continue;
+    }
     let line = "";
     for (const word of paragraph.split(/\s+/).filter(Boolean)) {
       const trial = line ? `${line} ${word}` : word;
@@ -130,14 +135,14 @@ function contain(ctx, image, W, H) {
   ctx.restore();
 }
 
-function cover(ctx, image, W, H) {
+export function cover(ctx, image, W, H) {
   const scale = Math.max(W / image.width, H / image.height);
   const w = image.width * scale;
   const h = image.height * scale;
   ctx.drawImage(image, (W - w) / 2, (H - h) / 2, w, h);
 }
 
-function plainBackground(ctx, W, H, palette) {
+export function plainBackground(ctx, W, H, palette) {
   const g = ctx.createLinearGradient(0, 0, W * 0.3, H);
   g.addColorStop(0, palette.background);
   g.addColorStop(1, rgba(palette.accent, 0.22));
@@ -349,6 +354,11 @@ export function normalizeDesign(design) {
     font: FONT_SETS[d.font] ? d.font : "serif", area: AREAS[d.area] ? d.area : "top", ornament: ORNAMENTS[d.ornament] ? d.ornament : "none",
     scale: Math.max(0.6, Math.min(1.5, Number(d.scale) || 1)), fade: Math.max(0, Math.min(1, d.fade ?? 0.7)), showLogo: d.showLogo !== false,
     artFit: d.artFit === "contain" ? "contain" : "cover", headlineLines: Math.max(1, Math.min(8, Math.round(Number(d.headlineLines) || 3))),
+    // For print covers: an exact size in pixels, no background (drawn over another canvas),
+    // left-aligned words, and words kept where asked even without a picture.
+    width: Number.isInteger(d.width) && d.width > 0 && d.width <= 16000 ? d.width : 0,
+    height: Number.isInteger(d.height) && d.height > 0 && d.height <= 16000 ? d.height : 0,
+    bare: d.bare === true, textAlign: d.textAlign === "left" ? "left" : "", keepArea: d.keepArea === true,
   };
 }
 
@@ -371,7 +381,7 @@ function layout(ctx, d, box, unit) {
   for (let round = 0; round < 6; round += 1) {
     const u = unit * scale;
     items = [];
-    const centred = d.area !== "left" && d.area !== "right";
+    const centred = d.textAlign !== "left" && d.area !== "left" && d.area !== "right";
     if (centred && (d.ornament === "sun" || d.ornament === "stars")) items.push({ type: "top-ornament", h: u * 10, gap: u * 1.2 });
     if (d.kicker) {
       const size = u * (d.font === "script" ? 7.8 : 5.2);
@@ -427,24 +437,27 @@ function layout(ctx, d, box, unit) {
 export function drawBanner(canvas, design, assets = {}) {
   const d = normalizeDesign(design);
   // Without a picture there is nothing to balance the words against, so they sit in the middle.
-  if (!assets.art) d.area = "center";
-  const { w: W, h: H } = SIZES[d.aspect];
+  if (!assets.art && !d.keepArea) d.area = "center";
+  const { w: W, h: H } = d.width && d.height ? { w: d.width, h: d.height } : SIZES[d.aspect];
   if (canvas.width !== W) canvas.width = W;
   if (canvas.height !== H) canvas.height = H;
   const ctx = canvas.getContext("2d");
   const { background, text, accent } = d.palette;
   ctx.clearRect(0, 0, W, H);
-  if (assets.art && d.artFit === "contain") {
-    plainBackground(ctx, W, H, d.palette);
-    contain(ctx, assets.art, W, H);
-    return canvas;
+  // With `bare` the caller has drawn the background: only the words are drawn.
+  if (!d.bare) {
+    if (assets.art && d.artFit === "contain") {
+      plainBackground(ctx, W, H, d.palette);
+      contain(ctx, assets.art, W, H);
+      return canvas;
+    }
+    if (assets.art) {
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, W, H);
+      cover(ctx, assets.art, W, H);
+      fade(ctx, W, H, d.area, background, d.fade);
+    } else plainBackground(ctx, W, H, d.palette);
   }
-  if (assets.art) {
-    ctx.fillStyle = background;
-    ctx.fillRect(0, 0, W, H);
-    cover(ctx, assets.art, W, H);
-    fade(ctx, W, H, d.area, background, d.fade);
-  } else plainBackground(ctx, W, H, d.palette);
 
   const short = Math.min(W, H);
   const m = Math.round(short * 0.075);
@@ -452,7 +465,7 @@ export function drawBanner(canvas, design, assets = {}) {
   const footerSize = unit * 3;
   const box = textBox(d.area, W, H, m);
   if (d.footer && d.area !== "top") box.h -= footerSize * 2.4;
-  const align = d.area === "left" || d.area === "right" ? "left" : "center";
+  const align = d.textAlign === "left" || d.area === "left" || d.area === "right" ? "left" : "center";
   const cx = align === "left" ? box.x : box.x + box.w / 2;
   const { items, total } = layout(ctx, d, box, unit);
   let y = d.area === "top" ? box.y : d.area === "bottom" ? box.y + box.h - total : box.y + (box.h - total) / 2;

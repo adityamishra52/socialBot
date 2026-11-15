@@ -65,3 +65,24 @@ describe("publishing kit", () => {
     expect(strFromU8(files["kit/store-listing.txt"])).toBe("a\r\nb");
   });
 });
+
+describe("KDP paperback cover", async () => {
+  const { paperbackGeometry, coverDpi, paperbackSummary } = await import("../src/client/lib/paperbackCover.js");
+
+  it("sizes the full cover like KDP's cover calculator", () => {
+    const g = paperbackGeometry(152.4, 228.6, 200, "white");
+    expect(g.spine).toBeCloseTo(0.4504, 4);
+    expect(g.width).toBeCloseTo(12.7004, 4);
+    expect(g.height).toBeCloseTo(9.25, 4);
+    expect(g.front.x).toBeCloseTo(6.5754, 4);
+    expect(g.spineText).toBe(true);
+    // The barcode box: 2 x 1.2 in, 0.25 in from the spine and the bottom trim of the back cover.
+    expect(g.barcode.x + g.barcode.w).toBeCloseTo(0.125 + 6 - 0.25, 4);
+    expect(g.barcode.y + g.barcode.h).toBeCloseTo(0.125 + 9 - 0.25, 4);
+    expect(paperbackGeometry(152.4, 228.6, 200, "cream").spine).toBeCloseTo(0.5, 4);
+    expect(paperbackGeometry(152.4, 228.6, 60, "white").spineText).toBe(false);
+    expect(coverDpi(g)).toBe(300);
+    expect(coverDpi(paperbackGeometry(215.9, 279.4, 800, "premium"))).toBeLessThan(300);
+    expect(paperbackSummary(g, 300).size).toBe("12.700 × 9.250 in");
+  });
+});

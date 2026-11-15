@@ -12,7 +12,7 @@ export const STORE_STEPS = [
       "Answer KDP's question about AI-generated content honestly: it asks whether text, images or translations were made with AI tools.",
       "Content: upload the EPUB as the manuscript, and the cover JPG under \"Upload a cover you already have\". Check it in the previewer.",
       "An ISBN is optional for Kindle (Amazon gives an ASIN). Set the price and royalty, then publish. It is usually live within 72 hours.",
-      "Paperback (optional): Create, then Paperback. Choose the PDF's page size as the trim size, no bleed, and upload the PDF as the interior. A paperback cover wraps the back, spine and front: KDP's Cover Creator can make it with the cover image.",
+      "Paperback (optional): Create, then Paperback. Choose the PDF's page size as the trim size and \"No bleed\" for the interior, and upload the PDF as the manuscript. For the cover choose \"Upload a cover you already have (print-ready PDF only)\" and upload the paperback cover PDF; leave \"Yes, my cover has a barcode\" unticked so KDP adds it. Use the same paper and page count the cover was made for.",
       "If you enrol the ebook in KDP Select, Amazon requires it to be sold only on Amazon: then don't publish the ebook on Google Play or through Draft2Digital.",
     ],
   },

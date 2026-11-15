@@ -70,3 +70,10 @@ describe("banner drawing helpers", () => {
     expect(d).toMatchObject({ aspect: "4:5", font: "serif", area: "top", points: ["a"], scale: 1.5, fade: 0.7 });
   });
 });
+
+describe("banner paragraphs", () => {
+  it("keeps one blank line between paragraphs", () => {
+    const measure = (t: string) => t.length * 10;
+    expect(wrapLines(measure, "\nFirst one\n\n\nSecond", 500)).toEqual(["First one", "", "Second"]);
+  });
+});

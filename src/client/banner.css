@@ -78,3 +78,5 @@
 .eb-listing { display: grid; gap: 0.3rem; margin-top: 0.4rem; }
 .eb-listing textarea, .eb-listing input { width: 100%; }
 .eb-listing label { margin-top: 0.5rem; }
+.eb-wrap { width: 100%; height: auto; display: block; margin: 0.5rem 0 0.2rem; border-radius: 4px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2); }
+.eb-notes { margin: 0.3rem 0 0; padding-left: 1.2rem; }
