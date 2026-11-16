@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fitOptions, uploadDataUrls } from "../lib/images.js";
+import { screenshotPosts } from "../lib/shots.js";
 import { Link } from "../router.jsx";
 import {
   CostCard, ErrorNote, JobCard, LinkField, PLATFORMS, StatusBadge, announceTask, linkValue, useJobSteps,
@@ -18,6 +19,7 @@ const PRESETS = [
   ["sharpen", "Sharper & brighter"],
   ["clean", "Clean up clutter & watermarks"],
   ["vibrant", "Vibrant colours"],
+  ["popups", "Remove pop-ups & cookie banners"],
 ];
 const MAX_SELECTED = 10;
 const JOB_KEY = "sitepost_publishing";
@@ -77,6 +79,7 @@ export default function SitePost({ me, refreshMe }) {
   const [direction, setDirection] = useState("");
   const [followLinks, setFollowLinks] = useState(false);
   const [site, setSite] = useState(null);
+  const [shotPlan, setShotPlan] = useState(null);
   const [options, setOptions] = useState([]);
   const [chosen, setChosen] = useState([]);
   const [round, setRound] = useState(0);
@@ -117,7 +120,10 @@ export default function SitePost({ me, refreshMe }) {
     });
     addUsage(data.usage);
     setSite(data.site);
-    data.images = await fitOptions(data.images);
+    setShotPlan(data.shot_plan ?? null);
+    // The AI's screenshot posts first (drawn here from the page's screenshot), then the page's own images.
+    const shots = await screenshotPosts(data.site, data.shot_plan, { mode }).catch(() => []);
+    data.images = [...shots, ...await fitOptions(data.images)];
     setOptions(data.images);
     setChosen(data.images.length ? [data.images[0].id] : []);
     setRound(0);
@@ -131,12 +137,14 @@ export default function SitePost({ me, refreshMe }) {
 
   const moreImages = () => run("images", async () => {
     const next = round + 1;
-    // The page's own images, in another order, fitted to 4:5 here in the browser.
+    // Other parts of the page's screenshot, and the page's own images in another order, fitted to 4:5 here in the browser.
     const own = site.images || [];
-    if (!own.length) return;
-    const start = (next * 2) % own.length;
-    const ordered = [...own.slice(start), ...own.slice(0, start)].slice(0, 5);
-    const data = { images: await fitOptions(ordered.map((image, i) => ({ id: `r${next}-${i}`, label: `Site image ${((start + i) % own.length) + 1}`, image, fit: true }))) };
+    const shots = await screenshotPosts(site, shotPlan, { mode, round: next, count: 2 }).catch(() => []);
+    if (!own.length && !shots.length) return;
+    const start = own.length ? (next * 2) % own.length : 0;
+    const ordered = [...own.slice(start), ...own.slice(0, start)].slice(0, 5 - Math.min(shots.length, 2));
+    const fitted = await fitOptions(ordered.map((image, i) => ({ id: `r${next}-${i}`, label: `Site image ${((start + i) % own.length) + 1}`, image, fit: true })));
+    const data = { images: [...shots, ...fitted] };
     setRound(next);
     // Keep the chosen images; replace the rest with the new options.
     setOptions((old) => [...old.filter((o) => chosen.includes(o.id)), ...data.images.filter((o) => !chosen.includes(o.id))]);
@@ -230,7 +238,7 @@ export default function SitePost({ me, refreshMe }) {
       <PageHeader
         eyebrow="Site to Post"
         title="Turn any page into an image post"
-        lead="Paste a page. AI reads it, writes long captions for each platform and offers five images from different parts of the page. Pick one or several, enhance them, and post them together."
+        lead="Paste a page. AI reads it, takes a screenshot, writes long captions for each platform and turns the best parts of the page into finished post images, next to the page's own pictures. Pick one or several, enhance them, and post them together."
       />
       {Object.keys(results).length > 0 && !site && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -272,8 +280,8 @@ export default function SitePost({ me, refreshMe }) {
             </button>
           </div>
           {busy === "read" && (
-            <JobCard title="Creating your post" steps={["Opening the page", "Writing the captions", "Picking images"]}
-              active={steps.active} startedAt={steps.startedAt} typical="Usually 15–40 seconds" />
+            <JobCard title="Creating your post" steps={["Opening and photographing the page", "Writing the captions", "Designing the images"]}
+              active={steps.active} startedAt={steps.startedAt} typical="Usually 20–45 seconds" />
           )}
         </div>
 
@@ -320,8 +328,9 @@ export default function SitePost({ me, refreshMe }) {
               </label>
             </div>
             <p className="field-note">
-              Regenerate shows other parts of the page (the images you selected stay). Enhance edits one image with AI:
-              professional, cinematic, original, or anything you type.
+              Screenshot posts show the real page under an AI headline, in the brand colour. Regenerate shows other
+              parts of the page (the images you selected stay). Enhance edits one image with AI: remove pop-ups,
+              professional, cinematic, or anything you type.
             </p>
           </div>
         )}

@@ -455,6 +455,77 @@ export async function renderedPage(url: string, keepLinks = false) {
   }
 }
 
+// --- Screenshots ---
+// The same reader service also photographs the page in its browser: the first screen (1280 × 1280)
+// and the whole page (1280 wide). Its picture links expire after a few hours, so the pictures are
+// downloaded at once. A screenshot is a bonus: any failure just means no screenshot.
+// SCREENSHOTS=off switches this off.
+
+export const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
+export const MAX_SCREENSHOT_HEIGHT = 16_000;
+
+/** Width and height of a PNG or JPEG, or null for anything else. */
+export function imageSize(data: Buffer): { width: number; height: number; mime: string } | null {
+  if (data.length > 24 && data.subarray(1, 4).toString() === "PNG") {
+    return { width: data.readUInt32BE(16), height: data.readUInt32BE(20), mime: "image/png" };
+  }
+  if (data.length > 4 && data[0] === 0xff && data[1] === 0xd8) {
+    for (let i = 2; i + 9 < data.length;) {
+      if (data[i] !== 0xff) return null;
+      const marker = data[i + 1];
+      const length = data.readUInt16BE(i + 2);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { width: data.readUInt16BE(i + 7), height: data.readUInt16BE(i + 5), mime: "image/jpeg" };
+      }
+      i += 2 + length;
+    }
+  }
+  return null;
+}
+
+async function readerShot(url: string, format: "screenshot" | "pageshot", started: number, budgetMs: number): Promise<Buffer | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, budgetMs - (Date.now() - started)));
+  try {
+    const headers: Record<string, string> = { Accept: "application/json", "X-Return-Format": format, "X-Timeout": String(Math.max(5, Math.floor(budgetMs / 1000) - 4)) };
+    if (env("JINA_API_KEY")) headers.Authorization = `Bearer ${env("JINA_API_KEY")}`;
+    const response = await fetch(`${READER}${url}`, { headers, signal: controller.signal });
+    if (!response.ok) return null;
+    const data = (await response.json())?.data || {};
+    const link = safeUrl(format === "pageshot" ? data.pageshotUrl : data.screenshotUrl);
+    const left = budgetMs - (Date.now() - started);
+    if (!link || left < 1500) return null;
+    const { body } = await safeGet(link, "image/png,image/jpeg,image/*", MAX_SCREENSHOT_BYTES + 1, left);
+    const size = imageSize(body);
+    if (body.length > MAX_SCREENSHOT_BYTES || !size || size.width < 200 || size.height < 200 || size.height > MAX_SCREENSHOT_HEIGHT) return null;
+    return body;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Screenshots of a public page: `page` is the whole page (or the first screen when the whole page
+ * took too long), `first` the first screen. Both null when screenshots are off or failed.
+ */
+export async function pageScreenshot(url: string, budgetMs = 22_000): Promise<{ page: Buffer | null; first: Buffer | null }> {
+  const none = { page: null, first: null };
+  if (env("SCREENSHOTS").toLowerCase() === "off") return none;
+  const clean = safeUrl(url);
+  if (!clean) return none;
+  try {
+    await checkPublicHost(clean);
+  } catch {
+    return none;
+  }
+  const started = Date.now();
+  // Two requests at once: the first screen is quick, the whole page can be slow on long pages.
+  const [first, page] = await Promise.all([readerShot(clean, "screenshot", started, budgetMs), readerShot(clean, "pageshot", started, budgetMs)]);
+  return { page: page || first, first: first || null };
+}
+
 /** Download a page and make sure it has readable content, using the reader for JavaScript sites. */
 export async function readPage(url: string, minChars = 200) {
   let fetched: { url: string; html: string } | null = null;

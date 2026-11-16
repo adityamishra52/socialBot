@@ -14,7 +14,8 @@ import { aiRun, usageIdsFrom, usageJson } from "./usage";
 import { configForUser, getConnection, updateConnection } from "./userconfig";
 import { advanceTopic, nextTopic, parseTopics } from "./topics";
 import { blockedReason, botJson, MAX_BOTS, nextRun, normalizeBot, runJson, tick } from "./autopilot";
-import { safeUrl } from "./web";
+import { imageSize, pageScreenshot, safeUrl } from "./web";
+import { planShots } from "./shots";
 import { campaignJson } from "./campaigns";
 import { freeTier } from "./gemini";
 
@@ -54,6 +55,37 @@ async function siteFrom(data: any) {
     image_count: Number.isInteger(raw.image_count) && raw.image_count >= 0 ? raw.image_count : 0,
     images: (Array.isArray(raw.images) ? raw.images : []).slice(0, MAX_SITE_IMAGES).filter((i: unknown) => typeof i === "string" && i.startsWith("data:image/")),
   };
+}
+
+/**
+ * Read a page and photograph it at the same time. The screenshots are stored for the user and given
+ * to the browser as signed links (12 hours); when the page has no pictures of its own, the first
+ * screen also becomes its picture. The links are relative (same origin), so the browser can draw
+ * them on a canvas. `shot` is the whole-page screenshot, for the AI to look at.
+ */
+async function readSiteWithShots(url: string, followLinks: boolean, userId: any) {
+  const [site, shots] = await Promise.all([readSite(url, followLinks), pageScreenshot(url)]);
+  let shot: { data: Buffer; mime: string } | null = null;
+  const stored = new Map<Buffer, string>();
+  const store = async (data: Buffer) => {
+    if (!stored.has(data)) stored.set(data, publicFileUrl("", await storeBuffer(userId, "image", imageSize(data)!.mime, data, "screenshot"), 12));
+    return stored.get(data)!;
+  };
+  try {
+    if (shots.page) {
+      (site as any).screenshot = await store(shots.page);
+      shot = { data: shots.page, mime: imageSize(shots.page)!.mime };
+    }
+    if (shots.first && !site.images.length) {
+      const link = await store(shots.first);
+      site.images.push(link);
+      site.image_urls.push(site.url);
+      site.image = link;
+    }
+  } catch {
+    // Storing failed: carry on without the screenshot.
+  }
+  return { site, shot };
 }
 
 const imageFromDataUrl = (value: string) => {
@@ -241,7 +273,7 @@ export const routes: Route[] = [
   // --- Site to Reel ---
   ["POST", "/api/reel/storyboard", "user", async ({ body, user }) => {
     const data = await body();
-    const site = await readSite(textField(data, "url") || "", data.follow_links === true);
+    const { site } = await readSiteWithShots(textField(data, "url") || "", data.follow_links === true, user._id);
     const mode = MODES.includes(data.mode) ? data.mode : "trending";
     const format = data.format in FORMATS ? data.format : "auto";
     const [storyboard, usage] = await aiRun(user._id, "reel", `Reel (${mode}): ${site.host}`, () => writeStoryboard(site, textField(data, "instructions") || "", mode, format, data.last_format in FORMATS ? data.last_format : null));
@@ -277,15 +309,22 @@ export const routes: Route[] = [
   // --- Site to Post ---
   ["POST", "/api/sitepost/read", "user", async ({ body, user }) => {
     const data = await body();
-    const site = await readSite(textField(data, "url") || "", data.follow_links === true);
-    const [written, usage] = await aiRun(user._id, "site-post", `Site post: ${site.host}`, () => writeCaptions(site, textField(data, "direction") || "", data.mode));
+    const { site, shot } = await readSiteWithShots(textField(data, "url") || "", data.follow_links === true, user._id);
+    const direction = textField(data, "direction") || "";
+    const mode = MODES.includes(data.mode) ? data.mode : "trending";
+    // The captions and the screenshot plan are written at the same time; a failed plan only means
+    // the browser picks the parts of the page itself.
+    const [[written, plan], usage] = await aiRun(user._id, "site-post", `Site post: ${site.host}`, () => Promise.all([
+      writeCaptions(site, direction, mode),
+      shot ? planShots(site, shot.data, shot.mime, mode, direction).catch(() => null) : Promise.resolve(null),
+    ]));
     let images: any[] = [];
     try {
       images = imageOptions(site, 0);
     } catch (error) {
       if (!(error instanceof ConfigError)) throw error;
     }
-    return { site: { ...site, text: site.text.slice(0, 4000), pages: site.pages.map(({ shot, ...p }: any) => p) }, ...written, images, usage };
+    return { site: { ...site, text: site.text.slice(0, 4000), pages: site.pages.map(({ shot: _s, ...p }: any) => p) }, ...written, images, shot_plan: plan, usage };
   }],
   ["POST", "/api/sitepost/captions", "user", async ({ body, user }) => {
     const data = await body();
@@ -314,6 +353,7 @@ export const routes: Route[] = [
       professional: "Make it look professional and polished: balanced exposure, true colours, crisp detail.", cinematic: "Give it a cinematic look: rich contrast, film-like colour grade.",
       original: "Make it look natural: remove heavy filters and overlays, restore true colours.", sharpen: "Make it sharper and clearer, with less noise and blur.",
       clean: "Clean it up: remove clutter, stray text and watermarks, keeping the main subject.", vibrant: "Make the colours vibrant and eye-catching, without looking fake.",
+      popups: "Remove every cookie banner, pop-up, chat button and overlay from the web page shown, filling their place with the page's own plain background. Change nothing else.",
     };
     const wanted = [presets[data.preset] || "", String(data.instruction || "").slice(0, 1500)].filter(Boolean).join(" ");
     if (!wanted) throw new ConfigError("Choose an enhancement or describe the change you want.");
