@@ -1,7 +1,7 @@
 import { ConfigError, GenerationError } from "./errors";
 import { requestJson, speak, wavSeconds } from "./gemini";
 import { cleanHashtags, cleanText } from "./text";
-import { articleInfo, fetchHtml, mainContent, pageImages, pageMeta, pageText, readPage, renderedPage, safeGet, safeUrl, joinUrl, siteLinks } from "./web";
+import { articleInfo, fetchHtml, mainContent, pageImages, pageMeta, pageScreenshot, pageText, readPage, renderedPage, safeGet, safeUrl, joinUrl, siteLinks } from "./web";
 
 // Site to Reel: read one page, write a 15-20 second storyboard, voice it with the lite TTS model.
 // The browser renders the 3D animation and records the video.
@@ -77,9 +77,15 @@ async function imageDataUrl(url: string): Promise<string | null> {
   }
 }
 
-/** One public page: its own text and images (as data URLs the browser can draw), and optionally two linked pages. */
-export async function readSite(url: string, followLinks = false) {
+/**
+ * One public page: its own text and images (as data URLs the browser can draw), and optionally two
+ * linked pages. With `shots`, the page and each linked page are also photographed while they are
+ * read; the pictures come back as bytes in `capture` (null otherwise) for the caller to store.
+ */
+export async function readSite(url: string, followLinks = false, { shots = false } = {}) {
   const started = Date.now();
+  const mainShot = shots ? pageScreenshot(url) : null;
+  const pageShots: Promise<Buffer | null>[] = [];
   const page = await readPage(url, 200);
   const { meta } = page;
   const article = articleInfo(meta);
@@ -137,10 +143,13 @@ export async function readSite(url: string, followLinks = false) {
         description: cleanText(subMeta.meta["og:description"] || subMeta.meta.description || "").slice(0, 300),
         text: body.slice(0, 1500), image: imageIndex, shot: null,
       });
+      // Photographed while the next page is read; whatever isn't ready about 34 s in is left out.
+      if (shots) pageShots.push(pageScreenshot(sub.url, Math.min(20_000, Math.max(8_000, 34_000 - (Date.now() - started)))).then((s) => s.page));
     } catch {
       continue;
     }
   }
+  const capture = mainShot ? { ...(await mainShot), pages: await Promise.all(pageShots) } : null;
   const theme = meta.meta["theme-color"] || "";
   const parsed = new URL(page.url);
   return {
@@ -150,7 +159,7 @@ export async function readSite(url: string, followLinks = false) {
     site_name: cleanText(meta.meta["og:site_name"] || "").slice(0, 100),
     theme_color: HEX.test(theme) ? theme : "", text: text.slice(0, 12_000), article, single_page: !followLinks,
     screenshot: null, image: images[0] || null, images, image_urls: imageUrls,
-    links: links.slice(0, 6).map((l) => l.label), link_urls: links.map((l) => l.url), pages,
+    links: links.slice(0, 6).map((l) => l.label), link_urls: links.map((l) => l.url), pages, capture,
   };
 }
 

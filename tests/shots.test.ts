@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boxFrom, checkShotPlan } from "../src/server/shots";
 import { imageSize, pageScreenshot } from "../src/server/web";
-import { avoidPopups, coverage, cropFor, shotPalette } from "../src/client/lib/shots.js";
+import { avoidPopups, bareTitle, coverage, cropFor, labelOf, shotPalette } from "../src/client/lib/shots.js";
 
 function png(width: number, height: number, extra = 3000) {
   const data = Buffer.alloc(24 + extra);
@@ -118,6 +118,64 @@ describe("page screenshots", () => {
   });
 });
 
+describe("linked page screenshots", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const SITE = "https://93.184.216.34";
+  const words = (topic: string) => Array.from({ length: 40 }, (_, i) => `${topic} sentence ${i} explains what the product does for small teams.`).join(" ");
+  const html = (title: string, body: string, links = "") => new Response(
+    `<html><head><title>${title}</title></head><body><nav>${links}</nav><main><h1>${title}</h1><p>${body}</p></main></body></html>`,
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
+  );
+  const heights: Record<string, [number, number]> = { "/": [1280, 3000], "/pricing": [1280, 2000], "/features": [1280, 2500] };
+
+  function fakeWeb(readerCalls: string[]) {
+    vi.stubGlobal("fetch", vi.fn(async (url: any, init: any) => {
+      const address = String(url);
+      if (address.startsWith("https://r.jina.ai/")) {
+        const path = new URL(address.slice("https://r.jina.ai/".length)).pathname;
+        readerCalls.push(`${init.headers["X-Return-Format"]} ${path}`);
+        const key = encodeURIComponent(path);
+        return json({ data: { screenshotUrl: `https://8.8.8.8/${key}/first.png`, pageshotUrl: `https://8.8.8.8/${key}/full.png` } });
+      }
+      if (address.startsWith("https://8.8.8.8/")) {
+        const [, key, file] = new URL(address).pathname.split("/");
+        const [first, full] = heights[decodeURIComponent(key)];
+        return picture(png(1280, file === "full.png" ? full : first));
+      }
+      const path = new URL(address).pathname;
+      if (path === "/") return html("Acme team tools", words("Home"), '<a href="/pricing">Pricing plans</a> <a href="/features">All features</a>');
+      return html(path === "/pricing" ? "Pricing" : "Features", words(path.slice(1)));
+    }));
+  }
+
+  it("photographs the page and each linked page, and keeps the bytes out of the page data", async () => {
+    const { readSite } = await import("../src/server/reel");
+    const calls: string[] = [];
+    fakeWeb(calls);
+    const site: any = await readSite(`${SITE}/`, true, { shots: true });
+    expect(site.pages.map((p: any) => new URL(p.url).pathname).sort()).toEqual(["/features", "/pricing"]);
+    expect(imageSize(site.capture.page)?.height).toBe(3000);
+    expect(imageSize(site.capture.first)?.height).toBe(1280);
+    expect(site.capture.pages).toHaveLength(2);
+    site.pages.forEach((p: any, i: number) => {
+      expect(p.shot).toBeNull();
+      expect(imageSize(site.capture.pages[i])?.height).toBe(heights[new URL(p.url).pathname][1]);
+    });
+    expect(calls.sort()).toEqual(["pageshot /", "pageshot /features", "pageshot /pricing", "screenshot /", "screenshot /features", "screenshot /pricing"]);
+  });
+
+  it("takes no screenshots unless asked (bots read sites without them)", async () => {
+    const { readSite } = await import("../src/server/reel");
+    const calls: string[] = [];
+    fakeWeb(calls);
+    const site: any = await readSite(`${SITE}/`, true);
+    expect(site.pages).toHaveLength(2);
+    expect(site.capture).toBeNull();
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("screenshot post layout", () => {
   it("shows the top of the page for a hero box, filling the frame", () => {
     const region = cropFor([0, 0, 0.12, 1], 1280, 5436, 1.2);
@@ -156,6 +214,14 @@ describe("screenshot post layout", () => {
     expect(moved.x + moved.w).toBeLessThanOrEqual(0.603 * 1280 + 1);
     expect(avoidPopups(region, box, [], 1280, 1280)).toBe(region);
     expect(avoidPopups(region, box, [[0, 0, 1, 1]], 1280, 1280)).toBeNull();
+  });
+
+  it("tidies linked page titles and labels", () => {
+    expect(bareTitle("Notion features—Capture, find, automate | Notion")).toBe("Notion features—Capture, find, automate");
+    expect(bareTitle("Agentic Infrastructure - Vercel")).toBe("Agentic Infrastructure");
+    expect(bareTitle("Ship faster - the guide to building apps that scale")).toBe("Ship faster - the guide to building apps that scale");
+    expect(labelOf("See all features→")).toBe("SEE ALL FEATURES");
+    expect(labelOf("मूल्य सूची »")).toBe("मूल्य सूची");
   });
 
   it("picks readable colours", () => {

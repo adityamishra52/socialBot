@@ -14,7 +14,7 @@ import { aiRun, usageIdsFrom, usageJson } from "./usage";
 import { configForUser, getConnection, updateConnection } from "./userconfig";
 import { advanceTopic, nextTopic, parseTopics } from "./topics";
 import { blockedReason, botJson, MAX_BOTS, nextRun, normalizeBot, runJson, tick } from "./autopilot";
-import { imageSize, pageScreenshot, safeUrl } from "./web";
+import { imageSize, safeUrl } from "./web";
 import { planShots } from "./shots";
 import { campaignJson } from "./campaigns";
 import { freeTier } from "./gemini";
@@ -58,13 +58,15 @@ async function siteFrom(data: any) {
 }
 
 /**
- * Read a page and photograph it at the same time. The screenshots are stored for the user and given
- * to the browser as signed links (12 hours); when the page has no pictures of its own, the first
- * screen also becomes its picture. The links are relative (same origin), so the browser can draw
- * them on a canvas. `shot` is the whole-page screenshot, for the AI to look at.
+ * Read a page (and its linked pages) and photograph them at the same time. The screenshots are
+ * stored for the user and given to the browser as signed links (12 hours); when the page has no
+ * pictures of its own, the first screen also becomes its picture. The links are relative (same
+ * origin), so the browser can draw them on a canvas. `shot` is the whole-page screenshot, for the
+ * AI to look at. The bytes themselves never go back to the browser.
  */
 async function readSiteWithShots(url: string, followLinks: boolean, userId: any) {
-  const [site, shots] = await Promise.all([readSite(url, followLinks), pageScreenshot(url)]);
+  const { capture, ...site } = await readSite(url, followLinks, { shots: true });
+  const shots = capture || { page: null, first: null, pages: [] };
   let shot: { data: Buffer; mime: string } | null = null;
   const stored = new Map<Buffer, string>();
   const store = async (data: Buffer) => {
@@ -82,8 +84,13 @@ async function readSiteWithShots(url: string, followLinks: boolean, userId: any)
       site.image_urls.push(site.url);
       site.image = link;
     }
+    // Each linked page: its own screenshot, shown when the reel clicks through to it.
+    const links = await Promise.all(shots.pages.map((data) => (data ? store(data) : null)));
+    links.forEach((link, i) => {
+      if (link && site.pages[i]) site.pages[i].shot = link;
+    });
   } catch {
-    // Storing failed: carry on without the screenshot.
+    // Storing failed: carry on without the screenshots.
   }
   return { site, shot };
 }
@@ -324,7 +331,7 @@ export const routes: Route[] = [
     } catch (error) {
       if (!(error instanceof ConfigError)) throw error;
     }
-    return { site: { ...site, text: site.text.slice(0, 4000), pages: site.pages.map(({ shot: _s, ...p }: any) => p) }, ...written, images, shot_plan: plan, usage };
+    return { site: { ...site, text: site.text.slice(0, 4000) }, ...written, images, shot_plan: plan, usage };
   }],
   ["POST", "/api/sitepost/captions", "user", async ({ body, user }) => {
     const data = await body();

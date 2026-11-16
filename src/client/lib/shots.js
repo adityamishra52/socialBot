@@ -207,7 +207,7 @@ function words(g, slide, pal, draw) {
 const FRAME = { x: 54, w: W - 108, bar: 58, bottom: H - 104 };
 
 /** One finished post: background, kicker, headline, the page in a browser frame, the address. */
-function drawPost(image, slide, pal, host, pick) {
+function drawPost(image, slide, pal, host, pick, address = host) {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
@@ -259,7 +259,7 @@ function drawPost(image, slide, pal, host, pick) {
   g.fillStyle = "#4B5563";
   g.font = `500 22px ${FONT}`;
   g.textBaseline = "middle";
-  let shown = host;
+  let shown = address;
   while (shown.length > 4 && g.measureText(shown).width > FRAME.w - 190) shown = `${shown.slice(0, -2)}…`;
   g.fillText(shown, pillX + 20, top + FRAME.bar / 2 + 1);
   g.drawImage(image, region.x, region.y, region.w, region.h, area.x, area.y, area.w, area.h);
@@ -294,14 +294,36 @@ function plainTop(image) {
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
+/** "example.com/pricing" from a full address. */
+function addressOf(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+/** A page title without the site name tacked on ("Pricing | Acme" → "Pricing"). */
+export function bareTitle(title) {
+  const parts = String(title || "").split(/\s+[|–—-]\s+/);
+  return parts.length > 1 && parts[parts.length - 1].split(/\s+/).length <= 3 ? parts.slice(0, -1).join(" – ") : String(title || "");
+}
+
+/** A short label from link text: letters, numbers and spaces only, at most 3 words. */
+export function labelOf(text) {
+  return String(text || "").replace(/[^\p{L}\p{M}\p{N}\s&'-]/gu, " ").split(/\s+/).filter(Boolean).slice(0, 3).join(" ").toUpperCase().slice(0, 24);
+}
+
 function sentences(text) {
   return String(text || "").split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.split(/\s+/).length >= 3);
 }
 
 /**
  * Finished post images from the page's screenshot. Round 0 uses the AI plan (then the most detailed
- * parts of the page) and adds the plain top of the page; later rounds ("Regenerate") show other
- * parts of the page. Returns [] when there is no screenshot or it can't be drawn.
+ * parts of the page), adds one post per photographed linked page and the plain top of the page;
+ * later rounds ("Regenerate") show other parts of the page. Returns [] when there is no screenshot
+ * or it can't be drawn.
  */
 export async function screenshotPosts(site, plan, { mode = "trending", round = 0, count = 3 } = {}) {
   if (!site?.screenshot) return [];
@@ -320,7 +342,7 @@ export async function screenshotPosts(site, plan, { mode = "trending", round = 0
   const clear = (region) => region && popups.every((box) => coverage(region, box, iw, ih) < 0.12) && !empty(image, region);
   const slides = plan?.slides || [];
   const short = (t) => String(t || "").split(/\s+/).slice(0, 10).join(" ");
-  const general = [site.title, ...sentences(site.description)].map(short).filter(Boolean);
+  const general = [bareTitle(site.title), ...sentences(site.description)].map(short).filter(Boolean);
   const kicker = (slides[0]?.kicker || site.site_name || "").toUpperCase().slice(0, 24);
   const out = [];
   const used = [];
@@ -372,6 +394,23 @@ export async function screenshotPosts(site, plan, { mode = "trending", round = 0
     }, "Screenshot post");
   }
   if (round === 0) {
+    // Each linked page that was read and photographed: the top of it, under its own title.
+    for (const [i, page] of (site.pages || []).entries()) {
+      const headline = short(bareTitle(page.title) || page.label);
+      if (!page.shot || !headline) continue;
+      try {
+        const shotOfPage = await loadImage(page.shot);
+        const pw = shotOfPage.naturalWidth;
+        const ph = shotOfPage.naturalHeight;
+        const drawn = drawPost(shotOfPage, { headline, kicker: labelOf(page.label) }, pal, host, (aspect) => {
+          const crop = cropFor([0, 0, 0.05, 1], pw, ph, aspect);
+          return empty(shotOfPage, crop) ? null : crop;
+        }, addressOf(page.url) || host);
+        if (drawn) out.push({ id: `shot-${round}-page${i}`, label: "Linked page post", image: drawn, fit: false });
+      } catch {
+        // Skip a linked page whose screenshot can't be drawn.
+      }
+    }
     try {
       out.push({ id: `shot-${round}-plain`, label: "Page screenshot", image: plainTop(image), fit: false });
     } catch {
